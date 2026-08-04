@@ -131,10 +131,12 @@ Variables > Path > New), then restart your terminal.
 2. In a terminal, from this project folder:
 
 ```powershell
-claude mcp add --transport stdio matlab -- C:\Users\jacyp\Projects\EEG\Tools\matlab-mcp-server-windows-x64.exe --initial-working-folder=C:\Users\jacyp\Projects\EEG
+claude mcp add --transport stdio matlab -- C:\Users\jacyp\Projects\EEG\Tools\matlab-mcp-server-windows-x64.exe --matlab-session-mode=existing
 ```
 
-3. Start `claude` in this folder. It will pick up `CLAUDE.md` automatically as project rules.
+3. Start `claude` **from this folder** — the server is registered to this project, so
+   started anywhere else it will not appear in `/mcp` at all. It picks up `CLAUDE.md`
+   automatically as project rules.
 4. Verify with `/mcp` — you should see the `matlab` server connected and its five tools.
 
 To remove later: `claude mcp remove matlab`.
@@ -144,10 +146,18 @@ To remove later: `claude mcp remove matlab`.
 | Argument | Use |
 |---|---|
 | `--matlab-root=C:\\Program Files\\MATLAB\\R2025b` | pick a specific MATLAB if you have several |
-| `--initial-working-folder=<project>` | MATLAB starts here |
+| `--initial-working-folder=<project>` | MATLAB starts here. **Only valid in `new`/`auto` mode** |
 | `--matlab-display-mode=nodesktop` | run headless, no MATLAB window |
 | `--matlab-session-mode=existing` | attach to a MATLAB you already have open |
 | `--disable-telemetry=true` | opt out of MathWorks usage data |
+
+> **`--initial-working-folder` and `--matlab-session-mode=existing` cannot be
+> combined.** The server refuses to start with
+> `option "initial-working-folder" is not compatible with MATLAB session mode set
+> to "existing"`, and `/mcp` shows only "failed" with no reason given. Attaching
+> to a running MATLAB means you do not get to choose where it started.
+>
+> When an MCP server fails, `claude --debug` prints the real cause.
 
 ### Attaching to an already-open MATLAB
 

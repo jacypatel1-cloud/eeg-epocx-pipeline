@@ -166,12 +166,30 @@ The MATLAB MCP server is already on your machine at
 
 ```powershell
 cd C:\Users\jacyp\Projects\EEG
-claude mcp add --transport stdio matlab -- C:\Users\jacyp\Projects\EEG\Tools\matlab-mcp-server-windows-x64.exe --initial-working-folder=C:\Users\jacyp\Projects\EEG --matlab-session-mode=existing
+claude mcp add --transport stdio matlab -- C:\Users\jacyp\Projects\EEG\Tools\matlab-mcp-server-windows-x64.exe --matlab-session-mode=existing
 ```
 
 `--matlab-session-mode=existing` is the important part: it attaches to the
 MATLAB window you already have open rather than starting a hidden one, so you
 can watch what happens.
+
+**Do NOT add `--initial-working-folder` to that command.** The two options are
+mutually exclusive, and the server refuses to start:
+
+```
+Error with supplied arguments: option "initial-working-folder" is not
+compatible with MATLAB session mode set to "existing".
+```
+
+It makes sense once stated: if you are attaching to a MATLAB that is already
+running, you do not get to choose where it started. The option only applies in
+`new` or `auto` mode, where the server launches MATLAB itself.
+
+Nothing is lost by leaving it out — `START_HERE.m` already changes to the
+project folder, so MATLAB is in the right place before Claude Code attaches.
+
+This failure is easy to misread, because `/mcp` reports only "failed" with no
+reason. If a server ever fails, `claude --debug` prints the actual cause.
 
 Then start it:
 
