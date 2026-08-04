@@ -68,19 +68,34 @@ if exist('shareMATLABSession', 'file') == 0
     end
 end
 
-if exist('shareMATLABSession', 'file') == 0
-    fprintf(2, '      MCP Server Toolbox not found.\n');
-    fprintf(2, '      Claude will not be able to see this window.\n');
-    fprintf(2, '      Everything else still works normally.\n');
-    fprintf(2, '      To fix: see SETUP.md, section 4.\n\n');
-else
+% NOTE: shareMATLABSession() can return without error and still not share
+% anything. Observed on 2026-08-04: it ran cleanly, reported success, and
+% matlab.engine.isEngineShared was still false, so Claude Code could not
+% attach. We therefore CHECK the result rather than trusting the absence of
+% an error, and fall back to the underlying MATLAB API if needed.
+if exist('shareMATLABSession', 'file') ~= 0
     try
         shareMATLABSession();
-        fprintf('      Shared. Claude can now attach to this window.\n\n');
+    catch
+        % ignore -- the verification below decides whether it worked
+    end
+end
+
+if ~matlab.engine.isEngineShared
+    try
+        matlab.engine.shareEngine('EEG_SESSION');
     catch ME
         fprintf(2, '      Could not share the session: %s\n', ME.message);
-        fprintf(2, '      Everything else still works normally.\n\n');
     end
+end
+
+if matlab.engine.isEngineShared
+    fprintf('      Shared as "%s". Claude Code can attach to this window.\n\n', ...
+            matlab.engine.engineName);
+else
+    fprintf(2, '      NOT SHARED. Claude Code will not be able to see this\n');
+    fprintf(2, '      window. Everything else still works normally.\n');
+    fprintf(2, '      To fix: see SETUP.md, section 4.\n\n');
 end
 
 %% ---- Ready -------------------------------------------------------------
