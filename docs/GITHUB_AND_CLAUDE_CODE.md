@@ -207,7 +207,7 @@ Once inside, type `/mcp` to confirm the `matlab` server is connected.
 **Start Claude Code from the project folder, every time.** The MATLAB server is
 registered to this project only. Started from anywhere else — your home folder,
 `C:\Windows\System32` — it does not appear in `/mcp` at all. It is not broken; it
-simply is not loaded. `Launch Claude Code.bat` handles this, so use that rather
+simply is not loaded. `2 - Claude Code.bat` handles this, so use that rather
 than typing `claude` wherever you happen to be.
 
 **Share MATLAB before starting Claude Code, not after.** Claude Code checks the

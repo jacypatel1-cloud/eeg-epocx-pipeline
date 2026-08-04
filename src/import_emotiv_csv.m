@@ -263,7 +263,7 @@ if exist(cfg.chanlocsFile, 'file') == 2
 else
     error('import_emotiv_csv:noChanlocs', ...
         ['Channel location file not found:\n  %s\n' ...
-         'See SETUP.md section 2 for the download link.'], cfg.chanlocsFile);
+         'See docs/SETUP.md section 2 for the download link.'], cfg.chanlocsFile);
 end
 
 EEG = eeg_checkset(EEG);

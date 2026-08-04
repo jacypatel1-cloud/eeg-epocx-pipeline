@@ -22,14 +22,14 @@ The dataset this was built against is [Harvard Dataverse
 `10.7910/DVN/JMH4PD`](https://doi.org/10.7910/DVN/JMH4PD) — 54 Emotiv EPOC X
 recordings, CC0 public domain.
 
-You also need EEGLAB, which is not bundled. See **`SETUP.md`**, then run
+You also need EEGLAB, which is not bundled. See **`docs/SETUP.md`**, then run
 `check_env()` — it names anything missing.
 
 ---
 
 ## Quick start
 
-**Double-click `Launch EEG Project.bat`.**
+**Double-click `1 - START HERE.bat`.**
 
 MATLAB opens already pointed at this folder, starts EEGLAB, checks the
 installation, shares the session so Claude can connect, and prints a menu.
@@ -205,10 +205,10 @@ recording.
 
 ## If something goes wrong
 
-**"EEGLAB not found"** — EEGLAB isn't in `toolboxes/`. See `SETUP.md`.
+**"EEGLAB not found"** — EEGLAB isn't in `toolboxes/`. See `docs/SETUP.md`.
 
 **"Channel location file not found"** — `data/emotivX_channels_location.ced` is
-missing. Download link is in `SETUP.md`.
+missing. Download link is in `docs/SETUP.md`.
 
 **"Could not determine the sampling rate"** — the file has no readable header. Pass
 it explicitly, but only if you know it for certain:
