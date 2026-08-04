@@ -1,0 +1,29 @@
+# Line endings
+#
+# This repository is edited on Windows, where the MATLAB editor writes CRLF,
+# but may be cloned on macOS or Linux, which use LF. Without the rules below,
+# git would report files as modified purely because of invisible line-ending
+# differences, and diffs would be unreadable.
+#
+# "text=auto" tells git to store everything with LF internally and convert on
+# checkout to whatever the local machine expects.
+
+* text=auto
+
+# Text files: always LF inside the repository
+*.m         text eol=lf
+*.md        text eol=lf
+*.ced       text eol=lf
+
+# Windows batch files must keep CRLF or they can fail to run
+*.bat       text eol=crlf
+
+# Binary: never convert, never try to diff as text
+*.png       binary
+*.pdf       binary
+*.fig       binary
+*.set       binary
+*.fdt       binary
+*.mat       binary
+*.edf       binary
+*.bdf       binary

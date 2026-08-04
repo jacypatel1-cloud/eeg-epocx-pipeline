@@ -1,0 +1,50 @@
+# =============================================================
+#  DO NOT ADD EXCEPTIONS TO THE data/ RULES BELOW.
+#
+#  A patient recording committed to a public repository is
+#  permanently public, because git keeps history even after the
+#  file is deleted. The protection only works if it covers the
+#  whole folder with no carve-outs -- not even "just one small
+#  sample file".
+# =============================================================
+
+# Recordings and anything derived from them
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+
+# The channel location file is NOT patient data. It is a small
+# text file describing where the 14 electrodes sit, and the code
+# needs it, so it is tracked deliberately.
+!data/*.ced
+
+# Generated output. All of this is rebuilt by run_pipeline(),
+# so nothing is lost by leaving it untracked.
+figures/*
+results/*
+!figures/.gitkeep
+!results/.gitkeep
+
+# EEGLAB and any other third-party toolbox (~150 MB)
+toolboxes/
+
+# Third-party executables kept alongside the project for convenience.
+# Tools/ holds the MathWorks MATLAB MCP Server (~19 MB). It is NOT ours to
+# redistribute, and a binary committed to git stays in the history forever
+# even if deleted later. Anyone cloning this repository downloads it
+# themselves -- see SETUP.md section 4.
+Tools/
+*.exe
+
+# MATLAB leftovers
+*.asv
+*.autosave
+*.mex*
+slprj/
+codegen/
+
+# Operating system clutter
+Thumbs.db
+desktop.ini
+.DS_Store
