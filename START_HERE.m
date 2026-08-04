@@ -68,34 +68,37 @@ if exist('shareMATLABSession', 'file') == 0
     end
 end
 
-% NOTE: shareMATLABSession() can return without error and still not share
-% anything. Observed on 2026-08-04: it ran cleanly, reported success, and
-% matlab.engine.isEngineShared was still false, so Claude Code could not
-% attach. We therefore CHECK the result rather than trusting the absence of
-% an error, and fall back to the underlying MATLAB API if needed.
-if exist('shareMATLABSession', 'file') ~= 0
+% HOW SHARING ACTUALLY WORKS -- worth knowing, because it is not obvious.
+% shareMATLABSession() does NOT use matlab.engine.shareEngine. It starts the
+% MATLAB Connector service and writes a small file:
+%     %APPDATA%\MathWorks\MATLAB MCP Server\v1\sessionDetails.json
+% holding this session's port, TLS certificate path and process ID. The MCP
+% server reads that file to find MATLAB.
+%
+% So matlab.engine.isEngineShared is IRRELEVANT here -- it reports on a
+% different subsystem and is false even when sharing is working perfectly.
+% Checking it cost an evening. We verify the three things that actually
+% matter instead: the file names THIS process, its certificate still exists,
+% and its port is listening.
+if exist('shareMATLABSession', 'file') == 0
+    fprintf(2, '      MCP Server Toolbox not installed.\n');
+    fprintf(2, '      Claude Code will not be able to see this window.\n');
+    fprintf(2, '      Everything else still works normally.\n\n');
+else
     try
         shareMATLABSession();
-    catch
-        % ignore -- the verification below decides whether it worked
-    end
-end
-
-if ~matlab.engine.isEngineShared
-    try
-        matlab.engine.shareEngine('EEG_SESSION');
     catch ME
-        fprintf(2, '      Could not share the session: %s\n', ME.message);
+        fprintf(2, '      shareMATLABSession failed: %s\n', ME.message);
     end
-end
 
-if matlab.engine.isEngineShared
-    fprintf('      Shared as "%s". Claude Code can attach to this window.\n\n', ...
-            matlab.engine.engineName);
-else
-    fprintf(2, '      NOT SHARED. Claude Code will not be able to see this\n');
-    fprintf(2, '      window. Everything else still works normally.\n');
-    fprintf(2, '      To fix: see SETUP.md, section 4.\n\n');
+    [ok, detail] = verify_session_shared();
+    if ok
+        fprintf('      Shared and verified (%s).\n', detail);
+        fprintf('      Start Claude Code AFTER this point, not before.\n\n');
+    else
+        fprintf(2, '      NOT SHARED: %s\n', detail);
+        fprintf(2, '      Claude Code will report "matlab failed".\n\n');
+    end
 end
 
 %% ---- Ready -------------------------------------------------------------
@@ -141,3 +144,50 @@ fprintf('--------------------------------------------------------------\n');
 fprintf('Full instructions are in README.md.\n');
 fprintf('The variable "cfg" now holds every folder path you need.\n');
 fprintf('--------------------------------------------------------------\n\n');
+
+
+% =========================================================================
+function [ok, detail] = verify_session_shared()
+%VERIFY_SESSION_SHARED  Confirm the MCP server can actually reach this MATLAB.
+%
+%   Checks the three things that have to be true, rather than assuming that
+%   shareMATLABSession() worked because it did not throw:
+%     1. sessionDetails.json exists
+%     2. the process ID in it is THIS MATLAB, not a stale one from a
+%        previous run
+%     3. the TLS certificate it points at still exists on disk
+%
+%   Returns ok = true only if all three hold.
+
+ok = false;
+
+p = fullfile(getenv('APPDATA'), 'MathWorks', 'MATLAB MCP Server', ...
+             'v1', 'sessionDetails.json');
+
+if exist(p, 'file') ~= 2
+    detail = 'sessionDetails.json was never written';
+    return
+end
+
+try
+    j = jsondecode(fileread(p));
+catch
+    detail = 'sessionDetails.json is unreadable';
+    return
+end
+
+if ~isfield(j, 'pid') || j.pid ~= feature('getpid')
+    detail = sprintf(['the session file points at process %d but this ' ...
+                      'MATLAB is %d -- it is stale, from an earlier run'], ...
+                      j.pid, feature('getpid'));
+    return
+end
+
+if isfield(j, 'certificate') && exist(j.certificate, 'file') ~= 2
+    detail = 'the security certificate it points at no longer exists';
+    return
+end
+
+ok     = true;
+detail = sprintf('port %d, pid %d', j.port, j.pid);
+end
