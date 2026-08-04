@@ -27,8 +27,9 @@ If you prefer to open MATLAB yourself: open `START_HERE.m` and press the green
 ```
 EEG/
 │
-├── Launch EEG Project.bat   ← DOUBLE-CLICK THIS TO START
-├── START_HERE.m             ← or run this inside MATLAB
+├── Launch EEG Project.bat   ← 1. DOUBLE-CLICK THIS FIRST (opens MATLAB)
+├── Launch Claude Code.bat   ← 2. then this, if you want Claude Code
+├── START_HERE.m             ← what the first launcher runs
 │
 ├── README.md                ← full instructions
 ├── WHERE_EVERYTHING_IS.md   ← this file

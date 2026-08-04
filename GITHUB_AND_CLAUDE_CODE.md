@@ -184,6 +184,20 @@ does not include it. The first run opens a browser to sign in.
 
 Once inside, type `/mcp` to confirm the `matlab` server is connected.
 
+### Two things that will otherwise catch you out
+
+**Start Claude Code from the project folder, every time.** The MATLAB server is
+registered to this project only. Started from anywhere else — your home folder,
+`C:\Windows\System32` — it does not appear in `/mcp` at all. It is not broken; it
+simply is not loaded. `Launch Claude Code.bat` handles this, so use that rather
+than typing `claude` wherever you happen to be.
+
+**Share MATLAB before starting Claude Code, not after.** Claude Code checks the
+connection once at startup. If MATLAB was not open and shared at that moment,
+`/mcp` shows a failure and will not retry on its own. The order is: run
+`START_HERE.m` in MATLAB, wait for `Shared and verified`, then start Claude Code.
+If you get it the wrong way round, `/exit` and start it again.
+
 It reads `CLAUDE.md` automatically, which contains the rule to run every change
 in MATLAB and then commit and push it.
 
