@@ -87,6 +87,14 @@ if isempty(tok)
         [~, subjFolder] = fileparts(folder);
         if ~isempty(regexp(subjFolder, '^\d+$', 'once'))
             info.subject = string(subjFolder);
+            % This dataset ships the SAME base filename (e.g. "eyesclosed1.dat")
+            % once per numbered subject folder, so nameOnly alone is not
+            % unique -- RUN_PIPELINE uses .name as the filename for every
+            % saved artifact (data/processed/<name>.set, results/psd_<name>.mat,
+            % figures/<name>_psdstack.png), and without the subject folded in,
+            % subject 2's "eyesclosed1" would silently overwrite subject 1's
+            % on disk, with no error and no visible sign anything was lost.
+            info.name = sprintf('%s_subj%s', nameOnly, info.subject);
         else
             info.subject = "UNKNOWN";
         end
