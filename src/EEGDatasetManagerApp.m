@@ -407,7 +407,41 @@ classdef EEGDatasetManagerApp < matlab.apps.AppBase
                 return
             end
 
-            name = app.SelectedDatasetName;
+            name   = app.SelectedDatasetName;
+            dsPath = fullfile(app.cfg.rawDir, name);
+
+            % .dat is a headerless numeric matrix -- IMPORT_MATRIX_DAT
+            % deliberately refuses to guess its sample rate or channel
+            % order (see that file), so RUN_PIPELINE cannot import one
+            % without ImportOptions supplied. Ask here, once, rather than
+            % having every such dataset just fail with no way to proceed.
+            importOptions = {};
+            if ~isempty(dir(fullfile(dsPath, '**', '*.dat')))
+                choice = uiconfirm(app.UIFigure, ...
+                    sprintf(['"%s" contains .dat recordings, which carry no sample ' ...
+                             'rate or channel order of their own.\n\n' ...
+                             'What sample rate were these recorded at?'], name), ...
+                    'Sample Rate Needed', ...
+                    'Options', {'128 Hz (standard)', '256 Hz (high-rate mode)', 'Cancel'}, ...
+                    'DefaultOption', 1, 'CancelOption', 3);
+                switch choice
+                    case '128 Hz (standard)'
+                        rateHz = 128;
+                    case '256 Hz (high-rate mode)'
+                        rateHz = 256;
+                    otherwise
+                        return
+                end
+                % Channel order is assumed to be this project's fixed EPOC X
+                % montage (cfg.channels) since the file itself cannot say --
+                % ChannelOrderSource records that assumption rather than
+                % hiding it, per IMPORT_MATRIX_DAT's provenance contract.
+                importOptions = {'SampleRate', rateHz, 'ChannelOrder', app.cfg.channels, ...
+                    'ChannelOrderSource', ['ASSUMED: canonical EPOC X order (fixed 14-' ...
+                    'channel montage), confirmed via Dataset Manager sample-rate prompt, ' ...
+                    'not documented by the source file']};
+            end
+
             app.RunStatusLabel.Text = sprintf('Running pipeline on "%s"...', name);
             app.LogTextArea.Value = {''};
             drawnow;
@@ -418,7 +452,9 @@ classdef EEGDatasetManagerApp < matlab.apps.AppBase
             cleanupObj = onCleanup(@() close(d));
 
             try
-                cmd = sprintf('resultsLocal = run_pipeline(''Dataset'', %s);', mat2str(name));
+                cmd = sprintf('resultsLocal = run_pipeline(''Dataset'', %s, ''ImportOptions'', importOptionsLocal);', ...
+                    mat2str(name));
+                importOptionsLocal = importOptions; %#ok<NASGU> % read by evalc below
                 captured = evalc(cmd);
 
                 nOk   = sum([resultsLocal.ok]); %#ok<NODEF>
@@ -442,7 +478,17 @@ classdef EEGDatasetManagerApp < matlab.apps.AppBase
         function refreshResultsTab(app)
             pngPath = fullfile(app.cfg.figDir, 'comparison_first_secondlast_last.png');
             if exist(pngPath, 'file') == 2
-                app.ResultsImage.ImageSource = pngPath;
+                % Read the pixels rather than pointing ImageSource at the path.
+                % The comparison figure is always saved under this same
+                % filename, so setting ImageSource to the same path string
+                % after a new run does not reliably force uiimage to reload
+                % the (changed) file on disk -- passing the decoded image
+                % data instead guarantees the tab actually shows the latest run.
+                try
+                    app.ResultsImage.ImageSource = imread(pngPath);
+                catch
+                    app.ResultsImage.ImageSource = pngPath;
+                end
                 app.ResultsImage.Visible = 'on';
                 app.NoResultsLabel.Visible = 'off';
             else
