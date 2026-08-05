@@ -20,6 +20,9 @@ function results = run_pipeline(varargin)
 %       'Limit'         process at most this many recordings (quick test).
 %       'Compare'       build the comparison figure.        Default true
 %       'PlotEach'      save a stacked PSD per recording.   Default false
+%       'Visible'       show figure windows on screen while running. Default
+%                       true. The dataset manager app passes false, since it
+%                       shows the saved PNGs in its own Results tab instead.
 %
 %   TYPICAL USE
 %       cfg = setup_paths();
@@ -50,6 +53,7 @@ p.addParameter('Movement',      "",    @(x) ischar(x) || isstring(x));
 p.addParameter('Limit',         Inf,   @isscalar);
 p.addParameter('Compare',       true,  @islogical);
 p.addParameter('PlotEach',      false, @islogical);
+p.addParameter('Visible',       true,  @islogical);
 p.parse(varargin{:});
 opt = p.Results;
 
@@ -191,7 +195,7 @@ for i = 1:nRec
         if opt.PlotEach
             % No title: the client's reference figure has none, and the
             % recording is already identified by the saved filename.
-            h = plot_psd_stack(S, cfg, 'Save', P.saveFigures);
+            h = plot_psd_stack(S, cfg, 'Save', P.saveFigures, 'Visible', opt.Visible);
             close(h);
         end
 
@@ -223,9 +227,14 @@ if opt.Compare && numel(okIdx) >= 1
     [sel, labels] = pick_three(okInfos);
 
     specIdx = specOf(okIdx(sel));
-    compare_recordings(allSpecs(specIdx), cfg, ...
-        'Titles', labels, 'Save', P.saveFigures, ...
+    hCompare = compare_recordings(allSpecs(specIdx), cfg, ...
+        'Titles', labels, 'Save', P.saveFigures, 'Visible', opt.Visible, ...
         'Tag', 'comparison_first_secondlast_last');
+    if ~opt.Visible
+        % Not shown on screen -- nothing left to look at it, so don't leave
+        % it sitting in memory (it has already been saved to figures/ above).
+        close(hCompare);
+    end
 elseif opt.Compare
     warning('run_pipeline:nothingToCompare', ...
         'No recordings processed successfully; no comparison figure made.');

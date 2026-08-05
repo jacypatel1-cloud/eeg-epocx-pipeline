@@ -75,6 +75,7 @@ classdef EEGDatasetManagerApp < matlab.apps.AppBase
         OpenCleanedFolderButton matlab.ui.control.Button
         OpenFiguresFolderButton matlab.ui.control.Button
         OpenQCButton        matlab.ui.control.Button
+        SaveGraphButton     matlab.ui.control.Button
     end
 
     % =====================================================================
@@ -452,7 +453,12 @@ classdef EEGDatasetManagerApp < matlab.apps.AppBase
             cleanupObj = onCleanup(@() close(d));
 
             try
-                cmd = sprintf('resultsLocal = run_pipeline(''Dataset'', %s, ''ImportOptions'', importOptionsLocal);', ...
+                % Visible=false: run_pipeline's own comparison/per-recording
+                % figures are suppressed on screen -- this Results tab already
+                % shows the saved PNG, so a second pop-up window would just be
+                % a redundant copy of the same figure, not additional information.
+                cmd = sprintf(['resultsLocal = run_pipeline(''Dataset'', %s, ' ...
+                    '''ImportOptions'', importOptionsLocal, ''Visible'', false);'], ...
                     mat2str(name));
                 importOptionsLocal = importOptions; %#ok<NASGU> % read by evalc below
                 captured = evalc(cmd);
@@ -519,6 +525,24 @@ classdef EEGDatasetManagerApp < matlab.apps.AppBase
                 winopen(qcPath);
             else
                 uialert(app.UIFigure, 'No QC summary yet -- run the pipeline first.', 'Nothing to open');
+            end
+        end
+
+        function SaveGraphButtonPushed(app, ~)
+            pngPath = fullfile(app.cfg.figDir, 'comparison_first_secondlast_last.png');
+            if exist(pngPath, 'file') ~= 2
+                uialert(app.UIFigure, 'No comparison figure yet -- run the pipeline first.', 'Nothing to save');
+                return
+            end
+            [file, folder] = uiputfile('*.png', 'Save comparison figure as', ...
+                'comparison_first_secondlast_last.png');
+            if isequal(file, 0)
+                return
+            end
+            try
+                copyfile(pngPath, fullfile(folder, file));
+            catch ME
+                uialert(app.UIFigure, ME.message, 'Save failed', 'Icon', 'error');
             end
         end
 
@@ -759,10 +783,10 @@ classdef EEGDatasetManagerApp < matlab.apps.AppBase
             app.NoResultsLabel.VerticalAlignment = 'center';
             app.NoResultsLabel.FontColor = [0.5 0.5 0.5];
 
-            app.ResultsButtonGrid = uigridlayout(app.ResultsGrid, [1 3]);
+            app.ResultsButtonGrid = uigridlayout(app.ResultsGrid, [1 4]);
             app.ResultsButtonGrid.Layout.Row = 2;
             app.ResultsButtonGrid.Layout.Column = 1;
-            app.ResultsButtonGrid.ColumnWidth = {'1x', '1x', '1x'};
+            app.ResultsButtonGrid.ColumnWidth = {'1x', '1x', '1x', '1x'};
             app.ResultsButtonGrid.Padding = [0 0 0 0];
 
             app.OpenCleanedFolderButton = uibutton(app.ResultsButtonGrid, 'push');
@@ -782,6 +806,15 @@ classdef EEGDatasetManagerApp < matlab.apps.AppBase
             app.OpenQCButton.Layout.Row = 1;
             app.OpenQCButton.Layout.Column = 3;
             app.OpenQCButton.ButtonPushedFcn = @(src, event) app.OpenQCButtonPushed(event);
+
+            app.SaveGraphButton = uibutton(app.ResultsButtonGrid, 'push');
+            app.SaveGraphButton.Text = 'Save Graph As...';
+            app.SaveGraphButton.FontWeight = 'bold';
+            app.SaveGraphButton.BackgroundColor = app.ColorAccent;
+            app.SaveGraphButton.FontColor = [1 1 1];
+            app.SaveGraphButton.Layout.Row = 1;
+            app.SaveGraphButton.Layout.Column = 4;
+            app.SaveGraphButton.ButtonPushedFcn = @(src, event) app.SaveGraphButtonPushed(event);
 
             app.UIFigure.Visible = 'on';
         end

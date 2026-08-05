@@ -14,6 +14,7 @@ function figHandle = plot_psd_stack(S, cfg, varargin)
 %       'Title'      heading text; '' for none.            Default '' (none)
 %       'ShowMethod' small footnote naming the method.     Default true
 %       'Colormap'   any Nx3 colormap.                     Default jet
+%       'Visible'    show the figure window on screen.     Default true
 %
 %   ON THE DEFAULTS
 %   Title is OFF and there is no y-axis, because the reference figure has
@@ -40,6 +41,7 @@ p.addParameter('Scale',      'db',  @(x) any(strcmpi(x, {'db','linear'})));
 p.addParameter('Title',      '',    @(x) ischar(x) || isstring(x));
 p.addParameter('ShowMethod', true,  @islogical);
 p.addParameter('Colormap',   [],    @(x) isempty(x) || size(x,2) == 3);
+p.addParameter('Visible',    true,  @islogical);
 p.parse(S, cfg, varargin{:});
 opt = p.Results;
 
@@ -79,8 +81,10 @@ end
 % -------------------------------------------------------------------------
 % Draw
 % -------------------------------------------------------------------------
+visStr = 'on';
+if ~opt.Visible; visStr = 'off'; end
 figHandle = figure('Color', 'w', 'Position', fit_figure_to_screen(780, 1000), ...
-                   'Name', sprintf('PSD - %s', S.setname));
+                   'Name', sprintf('PSD - %s', S.setname), 'Visible', visStr);
 
 ax = axes(figHandle, 'Position', [0.14 0.07 0.82 0.88]);
 

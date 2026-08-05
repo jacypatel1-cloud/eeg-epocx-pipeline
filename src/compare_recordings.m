@@ -15,6 +15,11 @@ function figHandle = compare_recordings(specs, cfg, varargin)
 %       'Tag'        filename suffix.                  Default 'comparison'
 %       'Scale'      'db' | 'linear'.                  Default 'db'
 %       'ShowMethod' method footnote.                  Default true
+%       'Visible'    show the figure window on screen. Default true. The
+%                    dataset manager app passes false, since it already
+%                    displays the saved PNG in its own Results tab -- a
+%                    second on-screen copy popping up separately would be
+%                    redundant with that, not additive.
 %
 %   WHY A SHARED VERTICAL SCALE MATTERS
 %   If each column were scaled to its own maximum, a recording with half the
@@ -36,6 +41,7 @@ p.addParameter('Save',       false,        @islogical);
 p.addParameter('Tag',        'comparison', @(x) ischar(x) || isstring(x));
 p.addParameter('Scale',      'db',         @(x) any(strcmpi(x, {'db','linear'})));
 p.addParameter('ShowMethod', true,         @islogical);
+p.addParameter('Visible',    true,         @islogical);
 p.parse(specs, cfg, varargin{:});
 opt = p.Results;
 
@@ -87,9 +93,11 @@ end
 % -------------------------------------------------------------------------
 % Draw one column per recording
 % -------------------------------------------------------------------------
+visStr = 'on';
+if ~opt.Visible; visStr = 'off'; end
 figHandle = figure('Color', 'w', ...
                    'Position', fit_figure_to_screen(min(1750, 560*nRec), 1000), ...
-                   'Name', 'PSD comparison');
+                   'Name', 'PSD comparison', 'Visible', visStr);
 
 leftMargin  = 0.075;
 rightMargin = 0.015;
