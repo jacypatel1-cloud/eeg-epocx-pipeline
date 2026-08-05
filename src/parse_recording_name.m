@@ -74,9 +74,30 @@ info = struct( ...
 tok = regexp(nameOnly, '^(.*?)_EPOCX_(\d+)_(.*)$', 'tokens', 'once');
 
 if isempty(tok)
-    % Not an EmotivPRO-style name. This is normal for recordings made
-    % elsewhere or renamed by hand, so it is not an error -- but we still
-    % need a recording time for the comparison figure to be meaningful.
+    % Not an EmotivPRO-style name. Try the other pattern this project has
+    % actually seen: "<condition><trial#>.dat" inside a numbered subject
+    % folder (e.g. "eeg data/3/eyesclosed5.dat"), as shipped by the Zenodo
+    % 14-channel EPOC dataset. Condition becomes the movement label (trial
+    % number is dropped -- repeats already disambiguate via timestamp, same
+    % as repeated EmotivPRO movements do); the parent folder name becomes
+    % the subject ID if it is purely numeric.
+    tokZ = regexp(nameOnly, '^(eyesclosed|flicker)\d*$', 'tokens', 'once', 'ignorecase');
+    if ~isempty(tokZ)
+        info.movement = string(upper(tokZ{1}));
+        [~, subjFolder] = fileparts(folder);
+        if ~isempty(regexp(subjFolder, '^\d+$', 'once'))
+            info.subject = string(subjFolder);
+        else
+            info.subject = "UNKNOWN";
+        end
+        [info.timestamp, info.timeSource] = fallback_time(info.file);
+        info.valid = ~isnat(info.timestamp);
+        return
+    end
+
+    % Not recognised at all. This is normal for recordings made elsewhere
+    % or renamed by hand, so it is not an error -- but we still need a
+    % recording time for the comparison figure to be meaningful.
     [info.timestamp, info.timeSource] = fallback_time(info.file);
     info.movement = "UNLABELLED";
     info.subject  = "UNKNOWN";

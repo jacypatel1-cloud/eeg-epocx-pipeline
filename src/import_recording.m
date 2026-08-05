@@ -4,8 +4,10 @@ function [EEG, meta] = import_recording(file, cfg, varargin)
 %   [EEG, meta] = import_recording(file, cfg) inspects the file extension and
 %   routes to the right importer:
 %
-%       .edf, .bdf   -> pop_biosig   (the project's primary format)
+%       .edf, .bdf   -> pop_biosig       (the project's primary format)
 %       .csv         -> import_emotiv_csv
+%       .dat         -> import_matrix_dat (headerless matrix; needs
+%                        'SampleRate' and 'ChannelOrder' -- see that file)
 %
 %   This is the function the pipeline calls. Everything else goes through it,
 %   so adding a new format later means changing one file.
@@ -42,10 +44,14 @@ switch lower(ext)
     case '.csv'
         [EEG, meta] = import_emotiv_csv(file, cfg, varargin{:});
 
+    case '.dat'
+        [EEG, meta] = import_matrix_dat(file, cfg, varargin{:});
+
     otherwise
         error('import_recording:unsupportedFormat', ...
             ['Cannot import "%s" files. Supported: .edf, .bdf ' ...
-             '(via pop_biosig) and .csv (EmotivPRO export).\nFile: %s'], ...
+             '(via pop_biosig), .csv (EmotivPRO export), .dat (headerless ' ...
+             'matrix, needs SampleRate/ChannelOrder).\nFile: %s'], ...
              ext, file);
 end
 end

@@ -5,16 +5,26 @@ function results = run_pipeline(varargin)
 %   CSV in data/raw, then builds the three-recording comparison figure.
 %
 %   results = run_pipeline('Name', Value, ...) accepts:
-%       'Config'    a struct from PIPELINE_CONFIG. Default: defaults.
-%       'Subject'   only process this subject ID, e.g. "126518".
-%       'Movement'  only process this condition, e.g. "DOWN".
-%       'Limit'     process at most this many recordings (for a quick test).
-%       'Compare'   build the comparison figure.        Default true
-%       'PlotEach'  save a stacked PSD per recording.   Default false
+%       'Config'        a struct from PIPELINE_CONFIG. Default: defaults.
+%       'Dataset'       which data/raw/<name> subfolder to process. Default:
+%                       '' -- the most recently modified subfolder, i.e.
+%                       whatever was extracted most recently. See
+%                       SELECT_DATASET.
+%       'ImportOptions' cell array forwarded to IMPORT_RECORDING for every
+%                       file, e.g. {'SampleRate', 128, 'ChannelOrder', ...}.
+%                       Needed for formats that carry no metadata of their
+%                       own (see IMPORT_MATRIX_DAT); ignored by formats that
+%                       do (EDF/BDF, EmotivPRO CSV).
+%       'Subject'       only process this subject ID, e.g. "126518".
+%       'Movement'      only process this condition, e.g. "DOWN".
+%       'Limit'         process at most this many recordings (quick test).
+%       'Compare'       build the comparison figure.        Default true
+%       'PlotEach'      save a stacked PSD per recording.   Default false
 %
 %   TYPICAL USE
 %       cfg = setup_paths();
-%       results = run_pipeline();                       % everything
+%       results = run_pipeline();                       % latest dataset
+%       results = run_pipeline('Dataset', 'Harvard');   % a specific one
 %       results = run_pipeline('Subject', "126518");    % one participant
 %       results = run_pipeline('Limit', 3, 'PlotEach', true);   % quick look
 %
@@ -32,12 +42,14 @@ function results = run_pipeline(varargin)
 %   See also PIPELINE_CONFIG, PREPROCESS_RECORDING, COMPARE_RECORDINGS.
 
 p = inputParser;
-p.addParameter('Config',   [],    @(x) isempty(x) || isstruct(x));
-p.addParameter('Subject',  "",    @(x) ischar(x) || isstring(x));
-p.addParameter('Movement', "",    @(x) ischar(x) || isstring(x));
-p.addParameter('Limit',    Inf,   @isscalar);
-p.addParameter('Compare',  true,  @islogical);
-p.addParameter('PlotEach', false, @islogical);
+p.addParameter('Config',        [],    @(x) isempty(x) || isstruct(x));
+p.addParameter('Dataset',       "",    @(x) ischar(x) || isstring(x));
+p.addParameter('ImportOptions', {},    @iscell);
+p.addParameter('Subject',       "",    @(x) ischar(x) || isstring(x));
+p.addParameter('Movement',      "",    @(x) ischar(x) || isstring(x));
+p.addParameter('Limit',         Inf,   @isscalar);
+p.addParameter('Compare',       true,  @islogical);
+p.addParameter('PlotEach',      false, @islogical);
 p.parse(varargin{:});
 opt = p.Results;
 
@@ -46,15 +58,21 @@ cfg = setup_paths();
 P = opt.Config;
 if isempty(P); P = pipeline_config(); end
 
+datasetDir = select_dataset(cfg, 'Dataset', opt.Dataset);
+
 % =========================================================================
 % Find the recordings
 % =========================================================================
-% EDF and BDF are the brief's primary formats; CSV is the EmotivPRO export
-% that the public sample datasets ship as. All three are accepted, and
-% IMPORT_RECORDING routes each to the right reader.
-listing = [dir(fullfile(cfg.rawDir, '*.edf'));
-           dir(fullfile(cfg.rawDir, '*.bdf'));
-           dir(fullfile(cfg.rawDir, '*.csv'))];
+% EDF and BDF are the brief's primary formats; EmotivPRO CSV is what the
+% public sample datasets ship as; DAT is a headerless matrix format some
+% third-party datasets use (see IMPORT_MATRIX_DAT). All are accepted, and
+% IMPORT_RECORDING routes each to the right reader. The search is recursive
+% within the chosen dataset folder -- some datasets ship flat (Harvard),
+% others nest one subfolder per subject (Zenodo) -- '**' covers both.
+listing = [dir(fullfile(datasetDir, '**', '*.edf'));
+           dir(fullfile(datasetDir, '**', '*.bdf'));
+           dir(fullfile(datasetDir, '**', '*.csv'));
+           dir(fullfile(datasetDir, '**', '*.dat'))];
 listing = listing(~[listing.isdir]);
 
 % The Harvard dataset also ships "_intervalMarker.csv" files (event markers,
@@ -63,10 +81,19 @@ listing = listing(~[listing.isdir]);
 isMarker = contains({listing.name}, '_intervalMarker', 'IgnoreCase', true);
 listing  = listing(~isMarker);
 
+% A zip extracted from macOS carries a "__MACOSX" folder of AppleDouble
+% resource-fork shadow files (named "._<original>", same extension as the
+% real file). These are not recordings and importing one would fail deep
+% inside the reader with a confusing error, so they are filtered here where
+% the reason is obvious instead.
+isAppleJunk = contains({listing.folder}, '__MACOSX', 'IgnoreCase', true) | ...
+              startsWith({listing.name}, '._');
+listing = listing(~isAppleJunk);
+
 if isempty(listing)
     error('run_pipeline:noData', ...
-        ['No recordings found in:\n  %s\nExpected EmotivPRO CSV exports.'], ...
-        cfg.rawDir);
+        'No recordings found in:\n  %s\nExpected .edf, .bdf, .csv or .dat files.', ...
+        datasetDir);
 end
 
 infos = arrayfun(@(d) parse_recording_name(fullfile(d.folder, d.name)), ...
@@ -142,7 +169,7 @@ for i = 1:nRec
 
     try
         % --- import (dispatches on file extension) ---
-        [EEG, meta] = import_recording(infos(i).file, cfg);
+        [EEG, meta] = import_recording(infos(i).file, cfg, opt.ImportOptions{:});
         EEG.setname = infos(i).name;
         r.meta = meta;
 
