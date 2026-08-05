@@ -125,6 +125,13 @@ xlim(ax, [fSpan(1) - 0.05*diff(fSpan), fSpan(2) + 0.14*diff(fSpan)]);
 ylim(ax, [-spacing*0.35, (nCh-1)*spacing + yRange*1.02]);
 
 axis(ax, 'off');   % remove everything, then draw only what we want back
+% axis(ax,'off') does not reliably hide a UIAxes' own XAxis/YAxis ruler
+% (confirmed: XAxis.Visible/YAxis.Visible stay 'on', leaving stray native
+% tick numbers behind the hand-drawn strips) -- classic Axes do not have
+% this problem, but TargetAxes mode always passes a UIAxes, so this is not
+% optional there.
+ax.XAxis.Visible = 'off';
+ax.YAxis.Visible = 'off';
 
 % Frequency scale, drawn by hand beneath the lowest strip.
 yAxisLine = -spacing * 0.30;

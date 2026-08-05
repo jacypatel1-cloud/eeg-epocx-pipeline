@@ -146,6 +146,12 @@ for r = 1:nRec
     xlim(ax, [fSpan(1) - 0.06*diff(fSpan), fSpan(2) + 0.16*diff(fSpan)]);
     ylim(ax, [-spacing*0.40, (nCh-1)*spacing + yRange*1.02]);
     axis(ax, 'off');
+    % axis(ax,'off') does not reliably hide a UIAxes' own XAxis/YAxis ruler
+    % (confirmed: stays 'on', leaving stray native tick numbers behind the
+    % hand-drawn strips) -- only matters in TargetAxes mode (a UIAxes); a
+    % classic Axes (the normal, non-embedded call) does not have this problem.
+    ax.XAxis.Visible = 'off';
+    ax.YAxis.Visible = 'off';
 
     % Frequency scale under each column
     yAxisLine = -spacing * 0.30;

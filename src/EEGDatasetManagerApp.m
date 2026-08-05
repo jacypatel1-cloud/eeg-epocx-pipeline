@@ -96,6 +96,32 @@ classdef EEGDatasetManagerApp < matlab.apps.AppBase
         QuestionnairesGrid  matlab.ui.container.GridLayout
         QuestionnaireRecordingDropdown matlab.ui.control.DropDown
         QuestionnaireSubTabGroup matlab.ui.container.TabGroup
+
+        % --- Mode toggle: Research Datasets vs Patients ---------------------
+        ModeToggleGrid      matlab.ui.container.GridLayout
+        ResearchModeButton  matlab.ui.control.Button
+        PatientModeButton   matlab.ui.control.Button
+
+        % --- Patients mode: left panel (patient list + visit list) ----------
+        PatientsPanel       matlab.ui.container.Panel
+        PatientsGrid        matlab.ui.container.GridLayout
+        PatientTable        matlab.ui.control.Table
+        PatientButtonGrid   matlab.ui.container.GridLayout
+        AddPatientButton    matlab.ui.control.Button
+        VisitsHeaderLabel   matlab.ui.control.Label
+        VisitTable          matlab.ui.control.Table
+        AddVisitButton      matlab.ui.control.Button
+
+        % --- Patients mode: right side (one visit's scan + questionnaires) --
+        PatientVisitGrid    matlab.ui.container.GridLayout
+        PatientVisitLabel   matlab.ui.control.Label
+        VisitScrollPanel    matlab.ui.container.Panel
+        VisitScrollGrid     matlab.ui.container.GridLayout
+        RunVisitPipelineButton matlab.ui.control.Button
+        VisitStatusLabel    matlab.ui.control.Label
+        VisitScanAxes       matlab.ui.control.UIAxes
+        NoVisitScanLabel    matlab.ui.control.Label
+        VisitQuestionnaireLabels matlab.ui.control.Label   % 1x5, one per instrument
     end
 
     % =====================================================================
@@ -115,6 +141,13 @@ classdef EEGDatasetManagerApp < matlab.apps.AppBase
         QuestionnaireControls
         QuestionnaireResultLabels
         SelectedQuestionnaireRecording = ''
+
+        CurrentMode          = 'research'   % 'research' | 'patients'
+        PatientRows          = []    % struct array from list_patients()
+        SelectedPatientId    = ''
+        VisitRows            = []    % struct array from list_patient_visits()
+        SelectedVisitPath    = ''    % full path to the selected visit folder
+        SelectedVisitRecordingName = ''   % name of that visit's (first) recording, once known
     end
 
     % =====================================================================
@@ -145,6 +178,7 @@ classdef EEGDatasetManagerApp < matlab.apps.AppBase
             app.refreshDatasetTable();
             app.refreshResultsTab();
             app.refreshTrashTable();
+            app.setMode('research');
             app.RunStatusLabel.Text = 'Idle.';
         end
 
@@ -1055,6 +1089,435 @@ classdef EEGDatasetManagerApp < matlab.apps.AppBase
     end
 
     % =====================================================================
+    % Mode toggle: Research Datasets vs Patients
+    % =====================================================================
+    methods (Access = private)
+
+        function setMode(app, mode)
+            app.CurrentMode = mode;
+            isResearch = strcmp(mode, 'research');
+
+            app.LeftPanel.Visible = matlab.lang.OnOffSwitchState(isResearch);
+            app.RightGrid.Visible = matlab.lang.OnOffSwitchState(isResearch);
+            app.PatientsPanel.Visible = matlab.lang.OnOffSwitchState(~isResearch);
+            app.PatientVisitGrid.Visible = matlab.lang.OnOffSwitchState(~isResearch);
+
+            if isResearch
+                app.ResearchModeButton.BackgroundColor = app.ColorAccent;
+                app.ResearchModeButton.FontColor = [1 1 1];
+                app.PatientModeButton.BackgroundColor = [1 1 1];
+                app.PatientModeButton.FontColor = [0.1 0.1 0.1];
+            else
+                app.PatientModeButton.BackgroundColor = app.ColorAccent;
+                app.PatientModeButton.FontColor = [1 1 1];
+                app.ResearchModeButton.BackgroundColor = [1 1 1];
+                app.ResearchModeButton.FontColor = [0.1 0.1 0.1];
+                app.refreshPatientTable();
+            end
+        end
+
+        function ResearchModeButtonPushed(app, ~)
+            app.setMode('research');
+        end
+
+        function PatientModeButtonPushed(app, ~)
+            app.setMode('patients');
+        end
+
+    end
+
+    % =====================================================================
+    % Patients mode: patient list + visit list (left panel)
+    % =====================================================================
+    methods (Access = private)
+
+        function refreshPatientTable(app)
+            app.PatientRows = list_patients(app.cfg);
+
+            n = numel(app.PatientRows);
+            data = cell(n, 6);
+            for i = 1:n
+                r = app.PatientRows(i);
+                data{i,1} = r.lastName;
+                data{i,2} = r.firstName;
+                data{i,3} = r.dob;
+                data{i,4} = r.unitNumber;
+                data{i,5} = r.nVisits;
+                if isnat(r.lastVisitDate)
+                    data{i,6} = '(no visits yet)';
+                else
+                    data{i,6} = char(r.lastVisitDate, 'MM/dd/uuuu');
+                end
+            end
+            app.PatientTable.Data = data;
+
+            if ~isempty(app.SelectedPatientId) && ...
+               any(strcmp({app.PatientRows.patientId}, app.SelectedPatientId))
+                app.selectPatientById(app.SelectedPatientId);
+            else
+                app.SelectedPatientId = '';
+                app.VisitsHeaderLabel.Text = 'Visits: (select a patient)';
+                app.VisitRows = [];
+                app.VisitTable.Data = cell(0, 2);
+                app.clearVisitSelection();
+            end
+        end
+
+        function selectPatientById(app, patientId)
+            app.SelectedPatientId = patientId;
+            idx = find(strcmp({app.PatientRows.patientId}, patientId), 1);
+            if ~isempty(idx)
+                app.PatientTable.Selection = idx;
+                r = app.PatientRows(idx);
+                app.VisitsHeaderLabel.Text = sprintf('Visits: %s, %s', r.lastName, r.firstName);
+            end
+            app.refreshVisitTable();
+            app.clearVisitSelection();
+        end
+
+        function PatientTableCellSelection(app, event)
+            if isempty(event.Indices)
+                return
+            end
+            row = event.Indices(1, 1);
+            if row >= 1 && row <= numel(app.PatientRows)
+                app.selectPatientById(app.PatientRows(row).patientId);
+            end
+        end
+
+        function AddPatientButtonPushed(app, ~)
+            answer = inputdlg( ...
+                {'Last name:', 'First name:', 'Date of birth (mm/dd/yyyy):', 'EEG unit #:'}, ...
+                'Add Patient', 1, {'', '', '', ''});
+            if isempty(answer)
+                return
+            end
+            [lastName, firstName, dobStr, unitNum] = answer{:};
+            if isempty(strtrim(lastName)) || isempty(strtrim(firstName))
+                uialert(app.UIFigure, 'Last name and first name are both required.', 'Missing information');
+                return
+            end
+            try
+                dob = datetime(strtrim(dobStr), 'InputFormat', 'MM/dd/uuuu');
+            catch
+                uialert(app.UIFigure, 'Date of birth must be in mm/dd/yyyy format.', 'Invalid date');
+                return
+            end
+            try
+                pid = create_patient_profile(app.cfg, lastName, firstName, ...
+                    char(dob, 'uuuu-MM-dd'), unitNum);
+            catch ME
+                uialert(app.UIFigure, ME.message, 'Could not create patient', 'Icon', 'error');
+                return
+            end
+            app.refreshPatientTable();
+            app.selectPatientById(pid);
+        end
+
+        function refreshVisitTable(app)
+            if isempty(app.SelectedPatientId)
+                app.VisitRows = [];
+                app.VisitTable.Data = cell(0, 2);
+                return
+            end
+            app.VisitRows = list_patient_visits(app.cfg, app.SelectedPatientId);
+            n = numel(app.VisitRows);
+            data = cell(n, 2);
+            for i = 1:n
+                data{i,1} = char(app.VisitRows(i).date, 'MM/dd/uuuu');
+                data{i,2} = app.VisitRows(i).nRecordings;
+            end
+            app.VisitTable.Data = data;
+        end
+
+        function VisitTableCellSelection(app, event)
+            if isempty(event.Indices)
+                return
+            end
+            row = event.Indices(1, 1);
+            if row < 1 || row > numel(app.VisitRows)
+                return
+            end
+            visit = app.VisitRows(row);
+            app.SelectedVisitPath = visit.path;
+
+            try
+                listing = find_recording_files(visit.path);
+            catch
+                listing = [];
+            end
+            if isempty(listing)
+                app.SelectedVisitRecordingName = '';
+            else
+                info = parse_recording_name(fullfile(listing(1).folder, listing(1).name));
+                app.SelectedVisitRecordingName = info.name;
+                if numel(listing) > 1
+                    warning('EEGDatasetManagerApp:multipleRecordingsInVisit', ...
+                        ['Visit folder has %d recordings; a visit is expected to be one scan. ' ...
+                         'Showing "%s" only:\n  %s'], numel(listing), info.name, visit.path);
+                end
+            end
+
+            patientRow = app.PatientRows(strcmp({app.PatientRows.patientId}, app.SelectedPatientId));
+            app.PatientVisitLabel.Text = sprintf('%s, %s -- visit %s', ...
+                patientRow.lastName, patientRow.firstName, char(visit.date, 'MM/dd/uuuu'));
+
+            app.refreshVisitView();
+        end
+
+        function AddVisitButtonPushed(app, ~)
+            if isempty(app.SelectedPatientId)
+                uialert(app.UIFigure, 'Select a patient first.', 'No patient selected');
+                return
+            end
+            [file, folder] = uigetfile({'*.zip;*.edf;*.bdf;*.csv;*.dat', 'Recording or zip file'}, ...
+                'Select this visit''s recording');
+            if isequal(file, 0)
+                return
+            end
+            answer = inputdlg('Visit date (mm/dd/yyyy):', 'Add Visit', 1, ...
+                {char(datetime('now', 'Format', 'MM/dd/uuuu'))});
+            if isempty(answer)
+                return
+            end
+            try
+                visitDate = datetime(strtrim(answer{1}), 'InputFormat', 'MM/dd/uuuu');
+            catch
+                uialert(app.UIFigure, 'Visit date must be in mm/dd/yyyy format.', 'Invalid date');
+                return
+            end
+            try
+                add_visit_to_patient(app.cfg, app.SelectedPatientId, fullfile(folder, file), visitDate);
+            catch ME
+                uialert(app.UIFigure, ME.message, 'Could not add visit', 'Icon', 'error');
+                return
+            end
+            app.refreshPatientTable();
+            app.selectPatientById(app.SelectedPatientId);
+        end
+
+        function clearVisitSelection(app)
+            app.SelectedVisitPath = '';
+            app.SelectedVisitRecordingName = '';
+            app.PatientVisitLabel.Text = 'Select a patient and a visit';
+            app.refreshVisitView();
+        end
+
+    end
+
+    % =====================================================================
+    % Patients mode: single-visit view (scan + questionnaire summary)
+    % =====================================================================
+    methods (Access = private)
+
+        function refreshVisitView(app)
+            % Scan --------------------------------------------------------
+            gotScan = false;
+            if ~isempty(app.SelectedVisitRecordingName)
+                matPath = app.psdMatPathFor(app.SelectedVisitRecordingName);
+                if exist(matPath, 'file') == 2
+                    try
+                        loaded = load(matPath, 'S');
+                        plot_psd_stack(loaded.S, app.cfg, 'TargetAxes', app.VisitScanAxes);
+                        gotScan = true;
+                    catch ME
+                        uialert(app.UIFigure, ME.message, 'Could not draw scan', 'Icon', 'error');
+                    end
+                end
+            end
+            app.VisitScanAxes.Visible = matlab.lang.OnOffSwitchState(gotScan);
+            app.NoVisitScanLabel.Visible = matlab.lang.OnOffSwitchState(~gotScan);
+            if ~gotScan
+                if isempty(app.SelectedVisitPath)
+                    app.NoVisitScanLabel.Text = 'Select a patient and a visit.';
+                else
+                    app.NoVisitScanLabel.Text = sprintf(['No processed scan yet for this visit.\n' ...
+                        'Click "Run Pipeline For This Visit" below.']);
+                end
+            end
+            app.RunVisitPipelineButton.Enable = matlab.lang.OnOffSwitchState(~isempty(app.SelectedVisitPath));
+
+            % Questionnaire summary ---------------------------------------
+            saved = struct();
+            if ~isempty(app.SelectedVisitRecordingName)
+                saved = load_questionnaire_results(app.cfg, app.SelectedVisitRecordingName);
+            end
+            for qi = 1:numel(app.QuestionnaireDefs)
+                Q = app.QuestionnaireDefs(qi);
+                lbl = app.VisitQuestionnaireLabels(qi);
+                if isfield(saved, Q.id)
+                    r = saved.(Q.id);
+                    flagTxt = '';
+                    if r.flagged
+                        flagTxt = '  [FLAGGED]';
+                    end
+                    lbl.Text = sprintf('%s: %d (%s)%s', Q.id, r.total, r.band, flagTxt);
+                    if r.flagged
+                        lbl.FontColor = app.ColorDanger;
+                    else
+                        lbl.FontColor = [0.2 0.5 0.2];
+                    end
+                else
+                    lbl.Text = sprintf('%s: not yet completed', Q.id);
+                    lbl.FontColor = [0.5 0.5 0.5];
+                end
+            end
+        end
+
+        function RunVisitPipelineButtonPushed(app, ~)
+            if isempty(app.SelectedVisitPath)
+                uialert(app.UIFigure, 'Select a visit first.', 'No visit selected');
+                return
+            end
+
+            app.VisitStatusLabel.Text = 'Running pipeline for this visit...';
+            drawnow;
+            d = uiprogressdlg(app.UIFigure, 'Title', 'Running Pipeline', ...
+                'Message', 'Processing this visit''s scan...', 'Indeterminate', 'on');
+            cleanupObj = onCleanup(@() close(d));
+
+            try
+                cmd = sprintf(['resultsLocal = run_pipeline(''DatasetPath'', %s, ''Compare'', false, ' ...
+                    '''PlotEach'', true, ''Visible'', false);'], mat2str(app.SelectedVisitPath));
+                captured = evalc(cmd); %#ok<NASGU>
+
+                nOk = sum([resultsLocal.ok]); %#ok<NODEF>
+                nTotal = numel(resultsLocal);
+                app.VisitStatusLabel.Text = sprintf('Done: %d of %d succeeded.', nOk, nTotal);
+
+                if nOk >= 1 && isempty(app.SelectedVisitRecordingName)
+                    okInfos = [resultsLocal([resultsLocal.ok]).info];
+                    app.SelectedVisitRecordingName = okInfos(1).name;
+                end
+                app.refreshVisitView();
+            catch ME
+                app.VisitStatusLabel.Text = 'Pipeline failed -- see error.';
+                uialert(app.UIFigure, ME.message, 'Pipeline Error', 'Icon', 'error');
+            end
+        end
+
+        function EditVisitQuestionnaireButtonPushed(app, ~, instrumentId)
+            if isempty(app.SelectedVisitRecordingName)
+                uialert(app.UIFigure, ...
+                    'This visit has no processed scan yet -- run the pipeline first.', ...
+                    'No recording');
+                return
+            end
+            Q = app.QuestionnaireDefs(strcmp({app.QuestionnaireDefs.id}, instrumentId));
+            app.openQuestionnaireModal(Q, app.SelectedVisitRecordingName);
+        end
+
+        function openQuestionnaireModal(app, Q, recordingName)
+            %OPENQUESTIONNAIREMODAL  Small standalone window to fill out ONE
+            %   instrument for ONE recording -- reuses the same scoring/
+            %   persistence engine as the Questionnaires tab (QUESTIONNAIRE_
+            %   DEFINITIONS / SCORE_QUESTIONNAIRE / SAVE_QUESTIONNAIRE_RESULT)
+            %   without depending on that tab's dataset-scoped recording list,
+            %   since a patient visit isn't a "selected research dataset".
+            nItems = numel(Q.items);
+            fig = uifigure('Name', sprintf('%s -- %s', Q.title, recordingName), ...
+                'Position', [200 100 640 min(760, 160 + nItems*70)]);
+
+            g = uigridlayout(fig, [3 1]);
+            g.RowHeight = {'fit', '1x', 50};
+            g.ColumnWidth = {'1x'};
+
+            header = uilabel(g);
+            header.Text = sprintf('%s\n%s', Q.title, Q.instructions);
+            header.WordWrap = 'on';
+            header.Layout.Row = 1;
+            header.Layout.Column = 1;
+
+            scrollPanel = uipanel(g);
+            scrollPanel.Layout.Row = 2;
+            scrollPanel.Layout.Column = 1;
+            scrollPanel.Scrollable = 'on';
+            scrollPanel.BorderType = 'none';
+
+            itemGrid = uigridlayout(scrollPanel, [nItems 1]);
+            itemGrid.RowHeight = repmat({56}, 1, nItems);
+            itemGrid.ColumnWidth = {'1x'};
+
+            saved = load_questionnaire_results(app.cfg, recordingName);
+            priorResponses = [];
+            if isfield(saved, Q.id)
+                priorResponses = saved.(Q.id).responses;
+            end
+
+            controls = matlab.ui.control.DropDown.empty;
+            for it = 1:nItems
+                rowGrid = uigridlayout(itemGrid, [1 2]);
+                rowGrid.Layout.Row = it;
+                rowGrid.Layout.Column = 1;
+                rowGrid.ColumnWidth = {'1x', 240};
+                rowGrid.Padding = [0 0 0 0];
+
+                itemLabel = uilabel(rowGrid);
+                itemLabel.Text = sprintf('%d. %s', it, Q.items(it).text);
+                itemLabel.WordWrap = 'on';
+                itemLabel.Layout.Row = 1;
+                itemLabel.Layout.Column = 1;
+
+                dd = uidropdown(rowGrid);
+                dd.Layout.Row = 1;
+                dd.Layout.Column = 2;
+                dd.Items = ['-- Select --', Q.items(it).responseLabels];
+                dd.ItemsData = [-1, Q.items(it).responseValues];
+                if ~isempty(priorResponses)
+                    dd.Value = priorResponses(it);
+                else
+                    dd.Value = -1;
+                end
+                controls(end+1) = dd; %#ok<AGROW>
+            end
+
+            footerGrid = uigridlayout(g, [1 2]);
+            footerGrid.Layout.Row = 3;
+            footerGrid.Layout.Column = 1;
+            footerGrid.ColumnWidth = {150, '1x'};
+            footerGrid.Padding = [0 0 0 0];
+
+            saveBtn = uibutton(footerGrid, 'push');
+            saveBtn.Text = 'Save';
+            saveBtn.FontWeight = 'bold';
+            saveBtn.BackgroundColor = app.ColorAccent;
+            saveBtn.FontColor = [1 1 1];
+            saveBtn.Layout.Row = 1;
+            saveBtn.Layout.Column = 1;
+            saveBtn.ButtonPushedFcn = @(src, event) app.SaveModalQuestionnaire(controls, Q, recordingName, fig);
+
+            statusLbl = uilabel(footerGrid);
+            statusLbl.Text = '';
+            statusLbl.Layout.Row = 1;
+            statusLbl.Layout.Column = 2;
+        end
+
+        function SaveModalQuestionnaire(app, controls, Q, recordingName, fig)
+            responses = arrayfun(@(c) c.Value, controls);
+            if any(responses == -1)
+                uialert(fig, sprintf('Answer every item before saving (%d of %d still unanswered).', ...
+                    sum(responses == -1), numel(responses)), 'Incomplete', 'Icon', 'warning');
+                return
+            end
+            try
+                result = score_questionnaire(Q, responses);
+                save_questionnaire_result(app.cfg, recordingName, result);
+            catch ME
+                uialert(fig, ME.message, 'Could not save', 'Icon', 'error');
+                return
+            end
+            app.refreshVisitView();
+            if result.flagged
+                uialert(fig, sprintf(['%s''s self-harm screening item was endorsed.\n\n' ...
+                    'This is a flag for clinical attention -- no automated action has been or will ' ...
+                    'be taken.'], Q.title), 'Clinical Attention Flag', 'Icon', 'warning');
+            end
+            close(fig);
+        end
+
+    end
+
+    % =====================================================================
     % Small formatting helper
     % =====================================================================
     methods (Static, Access = private)
@@ -1089,8 +1552,8 @@ classdef EEGDatasetManagerApp < matlab.apps.AppBase
             app.UIFigure.Name = 'EEG Dataset Manager';
             app.UIFigure.Color = app.ColorBg;
 
-            app.MainGrid = uigridlayout(app.UIFigure, [2 1]);
-            app.MainGrid.RowHeight = {64, '1x'};
+            app.MainGrid = uigridlayout(app.UIFigure, [3 1]);
+            app.MainGrid.RowHeight = {64, 38, '1x'};
             app.MainGrid.ColumnWidth = {'1x'};
             app.MainGrid.Padding = [12 12 12 12];
             app.MainGrid.RowSpacing = 10;
@@ -1128,9 +1591,29 @@ classdef EEGDatasetManagerApp < matlab.apps.AppBase
             app.RefreshDatasetButton.Layout.Column = 3;
             app.RefreshDatasetButton.ButtonPushedFcn = @(src, event) app.RefreshDatasetButtonPushed(event);
 
+            % --- Mode toggle: Research Datasets vs Patients ------------------
+            app.ModeToggleGrid = uigridlayout(app.MainGrid, [1 3]);
+            app.ModeToggleGrid.Layout.Row = 2;
+            app.ModeToggleGrid.Layout.Column = 1;
+            app.ModeToggleGrid.ColumnWidth = {160, 160, '1x'};
+            app.ModeToggleGrid.Padding = [0 0 0 0];
+            app.ModeToggleGrid.ColumnSpacing = 6;
+
+            app.ResearchModeButton = uibutton(app.ModeToggleGrid, 'push');
+            app.ResearchModeButton.Text = 'Research Datasets';
+            app.ResearchModeButton.Layout.Row = 1;
+            app.ResearchModeButton.Layout.Column = 1;
+            app.ResearchModeButton.ButtonPushedFcn = @(src, event) app.ResearchModeButtonPushed(event);
+
+            app.PatientModeButton = uibutton(app.ModeToggleGrid, 'push');
+            app.PatientModeButton.Text = 'Patients';
+            app.PatientModeButton.Layout.Row = 1;
+            app.PatientModeButton.Layout.Column = 2;
+            app.PatientModeButton.ButtonPushedFcn = @(src, event) app.PatientModeButtonPushed(event);
+
             % --- Body: left dataset list, right tabs ---------------------
             app.BodyGrid = uigridlayout(app.MainGrid, [1 2]);
-            app.BodyGrid.Layout.Row = 2;
+            app.BodyGrid.Layout.Row = 3;
             app.BodyGrid.Layout.Column = 1;
             app.BodyGrid.ColumnWidth = {400, '1x'};
             app.BodyGrid.RowHeight = {'1x'};
@@ -1178,6 +1661,66 @@ classdef EEGDatasetManagerApp < matlab.apps.AppBase
             app.DeleteDatasetButton.Layout.Column = 2;
             app.DeleteDatasetButton.ButtonPushedFcn = @(src, event) app.DeleteDatasetButtonPushed(event);
 
+            % Patients mode: patient list + visit list (same cell as
+            % LeftPanel; only the one matching CurrentMode is Visible).
+            app.PatientsPanel = uipanel(app.BodyGrid);
+            app.PatientsPanel.Layout.Row = 1;
+            app.PatientsPanel.Layout.Column = 1;
+            app.PatientsPanel.Title = 'Patients (data/patients)';
+            app.PatientsPanel.BackgroundColor = app.ColorPanel;
+            app.PatientsPanel.Visible = 'off';
+
+            app.PatientsGrid = uigridlayout(app.PatientsPanel, [5 1]);
+            app.PatientsGrid.RowHeight = {'1x', 36, 20, '1x', 36};
+            app.PatientsGrid.ColumnWidth = {'1x'};
+
+            app.PatientTable = uitable(app.PatientsGrid);
+            app.PatientTable.Layout.Row = 1;
+            app.PatientTable.Layout.Column = 1;
+            app.PatientTable.ColumnName = {'Last', 'First', 'DOB', 'Unit#', 'Visits', 'Last Visit'};
+            app.PatientTable.ColumnWidth = {80, 80, 85, 50, 45, 85};
+            app.PatientTable.Data = cell(0, 6);
+            app.PatientTable.SelectionType = 'row';
+            app.PatientTable.CellSelectionCallback = @(src, event) app.PatientTableCellSelection(event);
+
+            app.PatientButtonGrid = uigridlayout(app.PatientsGrid, [1 1]);
+            app.PatientButtonGrid.Layout.Row = 2;
+            app.PatientButtonGrid.Layout.Column = 1;
+            app.PatientButtonGrid.Padding = [0 0 0 0];
+
+            app.AddPatientButton = uibutton(app.PatientButtonGrid, 'push');
+            app.AddPatientButton.Text = '+ Add Patient...';
+            app.AddPatientButton.FontWeight = 'bold';
+            app.AddPatientButton.BackgroundColor = app.ColorAccent;
+            app.AddPatientButton.FontColor = [1 1 1];
+            app.AddPatientButton.Layout.Row = 1;
+            app.AddPatientButton.Layout.Column = 1;
+            app.AddPatientButton.ButtonPushedFcn = @(src, event) app.AddPatientButtonPushed(event);
+
+            app.VisitsHeaderLabel = uilabel(app.PatientsGrid);
+            app.VisitsHeaderLabel.Text = 'Visits: (select a patient)';
+            app.VisitsHeaderLabel.FontWeight = 'bold';
+            app.VisitsHeaderLabel.Layout.Row = 3;
+            app.VisitsHeaderLabel.Layout.Column = 1;
+
+            app.VisitTable = uitable(app.PatientsGrid);
+            app.VisitTable.Layout.Row = 4;
+            app.VisitTable.Layout.Column = 1;
+            app.VisitTable.ColumnName = {'Date', 'Recordings'};
+            app.VisitTable.ColumnWidth = {110, 80};
+            app.VisitTable.Data = cell(0, 2);
+            app.VisitTable.SelectionType = 'row';
+            app.VisitTable.CellSelectionCallback = @(src, event) app.VisitTableCellSelection(event);
+
+            app.AddVisitButton = uibutton(app.PatientsGrid, 'push');
+            app.AddVisitButton.Text = '+ Add Visit...';
+            app.AddVisitButton.FontWeight = 'bold';
+            app.AddVisitButton.BackgroundColor = app.ColorAccent;
+            app.AddVisitButton.FontColor = [1 1 1];
+            app.AddVisitButton.Layout.Row = 5;
+            app.AddVisitButton.Layout.Column = 1;
+            app.AddVisitButton.ButtonPushedFcn = @(src, event) app.AddVisitButtonPushed(event);
+
             % Right side: selected-dataset label + tab group
             app.RightGrid = uigridlayout(app.BodyGrid, [2 1]);
             app.RightGrid.Layout.Row = 1;
@@ -1197,6 +1740,98 @@ classdef EEGDatasetManagerApp < matlab.apps.AppBase
             app.RightTabGroup = uitabgroup(app.RightGrid);
             app.RightTabGroup.Layout.Row = 2;
             app.RightTabGroup.Layout.Column = 1;
+
+            % Patients mode: one visit's scan + questionnaire summary (same
+            % cell as RightGrid; only the one matching CurrentMode is Visible).
+            % Scan and questionnaire summary sit in ONE scrollable panel, per
+            % the client's preference that scores "load below each scan, and
+            % you can just scroll down to see it."
+            app.PatientVisitGrid = uigridlayout(app.BodyGrid, [2 1]);
+            app.PatientVisitGrid.Layout.Row = 1;
+            app.PatientVisitGrid.Layout.Column = 2;
+            app.PatientVisitGrid.RowHeight = {26, '1x'};
+            app.PatientVisitGrid.Padding = [0 0 0 0];
+            app.PatientVisitGrid.RowSpacing = 6;
+            app.PatientVisitGrid.BackgroundColor = app.ColorBg;
+            app.PatientVisitGrid.Visible = 'off';
+
+            app.PatientVisitLabel = uilabel(app.PatientVisitGrid);
+            app.PatientVisitLabel.Text = 'Select a patient and a visit';
+            app.PatientVisitLabel.FontWeight = 'bold';
+            app.PatientVisitLabel.FontSize = 13;
+            app.PatientVisitLabel.Layout.Row = 1;
+            app.PatientVisitLabel.Layout.Column = 1;
+
+            app.VisitScrollPanel = uipanel(app.PatientVisitGrid);
+            app.VisitScrollPanel.Layout.Row = 2;
+            app.VisitScrollPanel.Layout.Column = 1;
+            app.VisitScrollPanel.Scrollable = 'on';
+            app.VisitScrollPanel.BorderType = 'none';
+
+            nInstruments = 5;
+            app.VisitScrollGrid = uigridlayout(app.VisitScrollPanel, [4 + nInstruments, 1]);
+            app.VisitScrollGrid.RowHeight = [{40, 24, 640, 28}, repmat({44}, 1, nInstruments)];
+            app.VisitScrollGrid.ColumnWidth = {'1x'};
+
+            app.RunVisitPipelineButton = uibutton(app.VisitScrollGrid, 'push');
+            app.RunVisitPipelineButton.Text = 'Run Pipeline For This Visit';
+            app.RunVisitPipelineButton.FontWeight = 'bold';
+            app.RunVisitPipelineButton.BackgroundColor = app.ColorAccent;
+            app.RunVisitPipelineButton.FontColor = [1 1 1];
+            app.RunVisitPipelineButton.Layout.Row = 1;
+            app.RunVisitPipelineButton.Layout.Column = 1;
+            app.RunVisitPipelineButton.ButtonPushedFcn = @(src, event) app.RunVisitPipelineButtonPushed(event);
+
+            app.VisitStatusLabel = uilabel(app.VisitScrollGrid);
+            app.VisitStatusLabel.Text = '';
+            app.VisitStatusLabel.Layout.Row = 2;
+            app.VisitStatusLabel.Layout.Column = 1;
+
+            app.VisitScanAxes = uiaxes(app.VisitScrollGrid);
+            app.VisitScanAxes.Layout.Row = 3;
+            app.VisitScanAxes.Layout.Column = 1;
+            app.VisitScanAxes.Toolbar.Visible = 'off';
+            disableDefaultInteractivity(app.VisitScanAxes);
+            app.VisitScanAxes.Visible = 'off';
+
+            app.NoVisitScanLabel = uilabel(app.VisitScrollGrid);
+            app.NoVisitScanLabel.Layout.Row = 3;
+            app.NoVisitScanLabel.Layout.Column = 1;
+            app.NoVisitScanLabel.Text = 'Select a patient and a visit.';
+            app.NoVisitScanLabel.HorizontalAlignment = 'center';
+            app.NoVisitScanLabel.VerticalAlignment = 'center';
+            app.NoVisitScanLabel.FontColor = [0.5 0.5 0.5];
+
+            qHeader = uilabel(app.VisitScrollGrid);
+            qHeader.Text = 'Questionnaire Scores';
+            qHeader.FontWeight = 'bold';
+            qHeader.Layout.Row = 4;
+            qHeader.Layout.Column = 1;
+
+            defs = questionnaire_definitions();
+            visitQLabels = matlab.ui.control.Label.empty;
+            for qi = 1:numel(defs)
+                Q = defs(qi);
+                rowGrid = uigridlayout(app.VisitScrollGrid, [1 2]);
+                rowGrid.Layout.Row = 4 + qi;
+                rowGrid.Layout.Column = 1;
+                rowGrid.ColumnWidth = {'1x', 130};
+                rowGrid.Padding = [0 0 0 0];
+
+                qLbl = uilabel(rowGrid);
+                qLbl.Text = sprintf('%s: not yet completed', Q.id);
+                qLbl.FontColor = [0.5 0.5 0.5];
+                qLbl.Layout.Row = 1;
+                qLbl.Layout.Column = 1;
+                visitQLabels(end+1) = qLbl; %#ok<AGROW>
+
+                editBtn = uibutton(rowGrid, 'push');
+                editBtn.Text = 'Fill Out / Edit';
+                editBtn.Layout.Row = 1;
+                editBtn.Layout.Column = 2;
+                editBtn.ButtonPushedFcn = @(src, event) app.EditVisitQuestionnaireButtonPushed(event, Q.id);
+            end
+            app.VisitQuestionnaireLabels = visitQLabels;
 
             % --- Files tab ------------------------------------------------
             app.FilesTab = uitab(app.RightTabGroup, 'Title', 'Files');
