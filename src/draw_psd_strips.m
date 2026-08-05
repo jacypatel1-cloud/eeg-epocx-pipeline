@@ -47,7 +47,12 @@ function yBase = draw_psd_strips(ax, S, style)
 %   hold "the scale" in their head while scanning fourteen rows. A small
 %   tick ruler is drawn at the right edge of each strip for that reason.
 %
-%   See also PLOT_PSD_STACK, COMPARE_RECORDINGS, COMPUTE_PSD.
+%   See also PLOT_PSD_STACK, COMPARE_RECORDINGS, COMPUTE_PSD, REORDER_CHANNELS_FOR_DISPLAY.
+
+% Client-requested reading order (frontmost pairs first), applied here so
+% both callers stay visually identical by construction -- see
+% REORDER_CHANNELS_FOR_DISPLAY for why this is a display-only reorder.
+S = reorder_channels_for_display(S);
 
 if strcmpi(style.scale, 'db')
     Y = S.psdDb;
