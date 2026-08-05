@@ -30,10 +30,30 @@ function P = pipeline_config(varargin)
 % amplifier has railed, or an electrode has come loose. Done BEFORE
 % filtering, because a filter smears one bad sample across its whole
 % window, turning a short glitch into a long one.
+%
+% ADAPTIVE BY DEFAULT. badSegAbsUV used to be a flat 300 uV for every
+% recording, chosen because Emotiv EPOC X sits around +/-100 uV in normal
+% use with blinks reaching ~200 uV. That number describes THIS dataset's
+% typical amplitude, not any future one -- a different headset, gain
+% setting, or electrode gel will shift the whole scale, and a fixed cutoff
+% either over-rejects clean data or misses real artifacts.
+%
+% Leaving badSegAbsUV empty (the default) switches on adaptive mode: the
+% threshold is recomputed for every recording as median + K robust-sigmas
+% of that recording's own |signal|, using MEDIAN and MAD rather than
+% mean/SD specifically because the artifacts being hunted would otherwise
+% drag the mean and SD toward themselves, raising the bar exactly where it
+% should be lowest. The floor/ceiling below keep the result physiologically
+% sane even on an unusually quiet or unusually noisy recording -- they are
+% not the threshold itself, just guardrails on it.
+%
+% Set badSegAbsUV to a number to force the old fixed-threshold behaviour
+% (e.g. a validated clinical protocol that mandates one specific cutoff).
 P.doBadSegments   = true;
-P.badSegAbsUV     = 300;   % |signal| above this (after removing the DC
-                           % offset) is not EEG. Emotiv EPOC X sits around
-                           % +/-100 uV in normal use; blinks reach ~200 uV.
+P.badSegAbsUV     = [];    % [] = adaptive (recommended); or a fixed uV value
+P.badSegAdaptK    = 8;     % robust-sigma multiplier for the adaptive threshold
+P.badSegFloorUV   = 100;   % never trigger below this, even on very clean data
+P.badSegCeilUV    = 600;   % never require above this, even on very noisy data
 P.badSegPadSec    = 0.1;   % also drop this much either side of a bad patch,
                            % because filter ringing spreads the damage
 
@@ -138,18 +158,37 @@ P.icLabelReject   = struct( ...   % probability above which a component is
 P.doInterp        = true;
 P.badChanFlatSec  = 5;     % flat for this many seconds = dead
 
-% MEASURED, NOT GUESSED. Across 6 recordings from this dataset (84 channel
-% observations), after 1-45 Hz filtering, each channel's correlation with the
-% average of the others was:
+% ADAPTIVE BY DEFAULT, FOR THE SAME REASON AS badSegAbsUV ABOVE. A fixed
+% correlation cutoff bakes in one recording set's electrode layout, skin
+% conductance and session length; a different client's sessions will have a
+% different correlation distribution even with perfectly good electrodes.
+%
+% Leaving badChanCorr empty computes, per recording, every channel's
+% correlation with the average of the rest, then flags a channel if its
+% correlation falls more than badChanCorrK robust-sigmas below the MEDIAN
+% correlation of that same recording -- i.e. "unusually disagreeable
+% compared to its own session's peers," not "below some number picked from
+% a different dataset." The floor/ceiling below exist so a session where
+% every channel happens to correlate very tightly (floor) or very loosely
+% (ceiling) doesn't turn the adaptive threshold into something absurd.
+%
+% THE FLOOR AND CEILING ARE INFORMED BY A REAL MEASUREMENT, THOUGH. Across 6
+% recordings from the original client dataset (84 channel observations),
+% after 1-45 Hz filtering, correlation with the average of the rest was:
 %     min 0.07 | 5th pct 0.28 | median 0.70 | 95th pct 0.93 | max 0.95
-% A threshold of 0.60 would have condemned 35% of all channels, which is
-% obviously wrong. 0.25 flags roughly the bottom 5%, a believable bad-channel
-% rate. Note also that the temporal electrodes T7 and T8 sit lowest by nature
-% (medians 0.49 and 0.51) because they are physically farthest from the rest
-% of the montage -- a high threshold would punish them for their position
-% rather than for any fault.
-P.badChanCorr     = 0.25;
-P.badChanMaxFrac  = 0.25;  % refuse to interpolate more than this fraction
+% Temporal electrodes T7/T8 sit lowest by nature (medians 0.49 and 0.51)
+% because they are physically farthest from the rest of the montage -- that
+% is why the floor stays well below the old fixed 0.25, so a naturally
+% peripheral channel is not punished for its position on a new client's
+% headset layout.
+%
+% Set badChanCorr to a number (0-1) to force the old fixed-threshold
+% behaviour.
+P.badChanCorr      = [];    % [] = adaptive (recommended); or a fixed 0-1 value
+P.badChanCorrK     = 3;     % robust-sigma multiplier below the recording's own median
+P.badChanCorrFloor = 0.10;  % never flag above this correlation, regardless of stats
+P.badChanCorrCeil  = 0.45;  % never require above this correlation, regardless of stats
+P.badChanMaxFrac   = 0.25;  % refuse to interpolate more than this fraction
 
 % =========================================================================
 % STAGE 8 -- Epoching and epoch rejection
@@ -162,7 +201,20 @@ P.epochSec        = 2;     % 2 s gives 0.5 Hz frequency resolution, and
                            % yields a usable number of epochs even from the
                            % ~9 s recordings in this dataset
 P.epochOverlap    = 0.5;   % fraction
-P.epochRejUV      = 150;   % drop epochs exceeding this after cleaning
+%
+% ADAPTIVE BY DEFAULT, SAME REASONING AS THE TWO THRESHOLDS ABOVE. This is
+% the last safety net -- everything by this point has already been
+% filtered, re-referenced and ASR/ICA-cleaned, so what remains should be
+% small, but "small" depends on the headset and session, not a number
+% carried over from a different dataset. Leaving epochRejUV empty computes
+% median + K robust-sigmas of this recording's own post-cleaning amplitude,
+% clamped to the floor/ceiling below.
+%
+% Set epochRejUV to a number to force the old fixed-threshold behaviour.
+P.epochRejUV       = [];   % [] = adaptive (recommended); or a fixed uV value
+P.epochRejK        = 8;    % robust-sigma multiplier for the adaptive threshold
+P.epochRejFloorUV  = 80;   % never trigger below this, even on very clean data
+P.epochRejCeilUV   = 400;  % never require above this, even on very noisy data
 P.epochMinKeep    = 3;     % fewer surviving epochs than this = unusable
 
 % =========================================================================
@@ -226,5 +278,38 @@ end
 if P.lowpassHz < 40 || P.lowpassHz > 45
     warning('pipeline_config:lowpassOutOfBrief', ...
         ['Low-pass is %.2f Hz; the brief specifies 40-45 Hz.'], P.lowpassHz);
+end
+
+% Adaptive-threshold guardrails: each floor must sit below its own ceiling,
+% or the clamp in robust_bound() would silently return the floor every
+% time, defeating the point of computing anything.
+check_floor_ceil('badSeg',    P.badSegFloorUV,   P.badSegCeilUV);
+check_floor_ceil('badChanCorr', P.badChanCorrFloor, P.badChanCorrCeil);
+check_floor_ceil('epochRej',  P.epochRejFloorUV, P.epochRejCeilUV);
+
+% A fixed override for badChanCorr is a correlation and must be a fraction;
+% the uV ones just need to be positive. Catches "0.25" typed as "25" (an
+% easy slip coming from the old default) or a negative typo.
+if ~isempty(P.badChanCorr) && (P.badChanCorr < 0 || P.badChanCorr > 1)
+    error('pipeline_config:badChanCorrRange', ...
+        'badChanCorr is a correlation and must be in [0, 1]; got %g.', P.badChanCorr);
+end
+if ~isempty(P.badSegAbsUV) && P.badSegAbsUV <= 0
+    error('pipeline_config:badSegAbsUVRange', ...
+        'badSegAbsUV must be a positive uV value; got %g.', P.badSegAbsUV);
+end
+if ~isempty(P.epochRejUV) && P.epochRejUV <= 0
+    error('pipeline_config:epochRejUVRange', ...
+        'epochRejUV must be a positive uV value; got %g.', P.epochRejUV);
+end
+end
+
+
+% =========================================================================
+function check_floor_ceil(name, floorVal, ceilVal)
+%CHECK_FLOOR_CEIL  Refuse a guardrail pair that can never bracket anything.
+if floorVal >= ceilVal
+    error('pipeline_config:badGuardrail', ...
+        '%sFloor (%g) must be below %sCeil (%g).', name, floorVal, name, ceilVal);
 end
 end

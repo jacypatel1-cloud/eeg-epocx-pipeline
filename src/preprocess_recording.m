@@ -60,7 +60,20 @@ if P.doBadSegments
     % sample would exceed the threshold if we tested the raw values.
     probe = double(EEG.data) - mean(double(EEG.data), 2);
 
-    isBad = any(abs(probe) > P.badSegAbsUV, 1);   % bad if ANY channel is bad
+    if isempty(P.badSegAbsUV)
+        badSegThr = robust_bound(abs(probe(:)), P.badSegAdaptK, ...
+                                  P.badSegFloorUV, P.badSegCeilUV, 'upper');
+        QC.badSegThreshold       = badSegThr;
+        QC.badSegThresholdSource = sprintf( ...
+            'adaptive: median + %.1fx robust-sigma of this recording, clamped to [%g %g] uV', ...
+            P.badSegAdaptK, P.badSegFloorUV, P.badSegCeilUV);
+    else
+        badSegThr = P.badSegAbsUV;
+        QC.badSegThreshold       = badSegThr;
+        QC.badSegThresholdSource = 'fixed (config override)';
+    end
+
+    isBad = any(abs(probe) > badSegThr, 1);   % bad if ANY channel is bad
 
     if any(isBad)
         % Grow each bad patch outwards, because filter ringing spreads the
@@ -83,11 +96,12 @@ if P.doBadSegments
             EEG = pop_select(EEG, 'nopoint', regions);
             QC.badSegments    = size(regions, 1);
             QC.badSegmentsSec = sum(isBad) / QC.srate;
-            log_stage(P.verbose, '  [1] bad segments: removed %d region(s), %.2f s', ...
-                      QC.badSegments, QC.badSegmentsSec);
+            log_stage(P.verbose, '  [1] bad segments: removed %d region(s), %.2f s (threshold %.1f uV, %s)', ...
+                      QC.badSegments, QC.badSegmentsSec, badSegThr, QC.badSegThresholdSource);
         end
     else
-        log_stage(P.verbose, '  [1] bad segments: none above %g uV', P.badSegAbsUV);
+        log_stage(P.verbose, '  [1] bad segments: none above %.1f uV (%s)', ...
+                  badSegThr, QC.badSegThresholdSource);
     end
 else
     log_stage(P.verbose, '  [1] bad segments: disabled');
@@ -181,9 +195,11 @@ end
 %   channels. Include a dead channel in it and its badness is subtracted
 %   into every other channel, which both corrupts the good data and hides
 %   the bad channel by making everything look equally odd.
-[badChans, badChanReasons] = detect_bad_channels(EEG, P);
-QC.badChannels       = {EEG.chanlocs(badChans).labels};
-QC.badChannelReasons = badChanReasons;
+[badChans, badChanReasons, corrThr, corrThrSource] = detect_bad_channels(EEG, P);
+QC.badChannels          = {EEG.chanlocs(badChans).labels};
+QC.badChannelReasons    = badChanReasons;
+QC.badChanCorrThreshold = corrThr;
+QC.badChanCorrSource    = corrThrSource;
 
 if ~isempty(badChans)
     log_stage(P.verbose, '  [*] bad channels detected: %s', ...
@@ -366,14 +382,55 @@ if P.doEpoch
         QC.usable = false;
         log_stage(P.verbose, '  [8] epochs: SKIPPED (recording shorter than one epoch)');
     else
-        EEG = eeg_regepochs(EEG, 'recurrence', step, ...
-                                 'limits', [0 P.epochSec], ...
-                                 'rmbase', NaN);
+        % eeg_regepochs (via pop_epoch/pop_select) can throw on a recording
+        % that stage 1 has fragmented into many short, discontinuous pieces
+        % -- more likely now that bad-segment detection is adaptive and
+        % catches genuine artifacts a loose fixed threshold used to miss.
+        % That is stage 1 doing its job correctly; it is EEGLAB's fixed-
+        % length re-epoching that has no graceful path for "too fragmented
+        % to epoch," and errors instead of returning zero epochs. Caught
+        % here, the same way ASR and ICA above are: the recording is marked
+        % unusable with a clear reason, not lost to a cryptic internal
+        % EEGLAB error that would also abort the whole batch.
+        try
+            EEG = eeg_regepochs(EEG, 'recurrence', step, ...
+                                     'limits', [0 P.epochSec], ...
+                                     'rmbase', NaN);
+        catch ME
+            QC.usable = false;
+            QC.warnings{end+1} = sprintf( ...
+                ['Epoching failed (%s). This usually means bad-segment removal ' ...
+                 '(stage 1) left the recording too fragmented to cut into fixed ' ...
+                 '%.1f s pieces. The cleaned continuous data was kept; no epochs ' ...
+                 'or spectrum could be produced.'], ME.message, P.epochSec);
+            log_stage(P.verbose, '  [8] epochs: FAILED (%s) -- recording marked unusable', ...
+                      ME.message);
+            EEG = eeg_checkset(EEG);
+            QC.nbchanOut   = EEG.nbchan;
+            QC.pntsOut     = EEG.pnts;
+            QC.trialsOut   = EEG.trials;
+            QC.durationOut = EEG.pnts * max(EEG.trials, 1) / EEG.srate;
+            QC.completedOn = datetime('now');
+            return
+        end
         nBefore = EEG.trials;
 
         % Drop epochs still holding extreme values after all the cleaning.
+        if isempty(P.epochRejUV)
+            epochRejThr = robust_bound(abs(double(EEG.data(:))), P.epochRejK, ...
+                                        P.epochRejFloorUV, P.epochRejCeilUV, 'upper');
+            QC.epochRejThreshold       = epochRejThr;
+            QC.epochRejThresholdSource = sprintf( ...
+                'adaptive: median + %.1fx robust-sigma of this recording, clamped to [%g %g] uV', ...
+                P.epochRejK, P.epochRejFloorUV, P.epochRejCeilUV);
+        else
+            epochRejThr = P.epochRejUV;
+            QC.epochRejThreshold       = epochRejThr;
+            QC.epochRejThresholdSource = 'fixed (config override)';
+        end
+
         EEG = pop_eegthresh(EEG, 1, 1:EEG.nbchan, ...
-                            -P.epochRejUV, P.epochRejUV, ...
+                            -epochRejThr, epochRejThr, ...
                             EEG.xmin, EEG.xmax, 0, 0);
         rejIdx = find(EEG.reject.rejthresh);
 
@@ -385,13 +442,13 @@ if P.doEpoch
             % so a human can look at what went wrong.
             QC.usable = false;
             QC.warnings{end+1} = sprintf( ...
-                ['All %d epochs exceeded +/-%g uV. The recording is too ' ...
-                 'noisy to use. Epochs were NOT removed, so the data can ' ...
+                ['All %d epochs exceeded +/-%.1f uV (%s). The recording is ' ...
+                 'too noisy to use. Epochs were NOT removed, so the data can ' ...
                  'still be inspected, but no result from it should be ' ...
-                 'trusted.'], nBefore, P.epochRejUV);
+                 'trusted.'], nBefore, epochRejThr, QC.epochRejThresholdSource);
             log_stage(P.verbose, ...
-                '  [8] epochs: ALL %d exceeded %g uV -- recording marked unusable', ...
-                nBefore, P.epochRejUV);
+                '  [8] epochs: ALL %d exceeded %.1f uV -- recording marked unusable', ...
+                nBefore, epochRejThr);
         elseif ~isempty(rejIdx)
             EEG = pop_rejepoch(EEG, rejIdx, 0);
         end
@@ -406,8 +463,8 @@ if P.doEpoch
                  'for a stable spectrum.'], EEG.trials, P.epochMinKeep);
         end
 
-        log_stage(P.verbose, '  [8] epochs: %d kept, %d rejected above %g uV', ...
-                  QC.nEpochs, QC.nEpochsRejected, P.epochRejUV);
+        log_stage(P.verbose, '  [8] epochs: %d kept, %d rejected above %.1f uV (%s)', ...
+                  QC.nEpochs, QC.nEpochsRejected, epochRejThr, QC.epochRejThresholdSource);
     end
 else
     log_stage(P.verbose, '  [8] epochs: disabled (data left continuous)');
@@ -460,7 +517,7 @@ n  = ceil(3.3 / (tb / srate));
 end
 
 
-function [badIdx, reasons] = detect_bad_channels(EEG, P)
+function [badIdx, reasons, corrThr, corrThrSource] = detect_bad_channels(EEG, P)
 %DETECT_BAD_CHANNELS  Flag flat, dead or uncorrelated electrodes.
 %
 %   Two independent tests, because they catch different failures:
@@ -470,34 +527,62 @@ function [badIdx, reasons] = detect_bad_channels(EEG, P)
 %              loose contact) rather than brain activity
 %
 %   Detection only. Nothing is changed here.
+%
+%   THE CORRELATION TEST IS TWO-PASS ON PURPOSE. Every channel's correlation
+%   with the rest of the head is computed first; only once all of them are
+%   known can an ADAPTIVE threshold be set relative to this recording's own
+%   median (see PIPELINE_CONFIG). A single-pass version could not do that --
+%   it would need the answer before it had finished computing the inputs.
 
 data = double(EEG.data);
 data = data - mean(data, 2);          % remove DC before judging amplitude
 n    = EEG.nbchan;
 
-badIdx  = [];
-reasons = {};
-
 flatSamples = round(P.badChanFlatSec * EEG.srate);
 
-for k = 1:n
-    why = {};
+isFlatCh = false(n, 1);
+flatSec  = zeros(n, 1);
+corrs    = nan(n, 1);
 
+for k = 1:n
     % --- flat test: longest run of near-zero change ---
     d       = abs(diff(data(k, :)));
     isFlat  = d < 1e-6;
     longest = longest_true_run(isFlat);
-    if longest >= flatSamples
-        why{end+1} = sprintf('flat for %.1f s', longest / EEG.srate); %#ok<AGROW>
-    end
+    isFlatCh(k) = longest >= flatSamples;
+    flatSec(k)  = longest / EEG.srate;
 
-    % --- correlation test: agreement with the rest of the head ---
+    % --- correlation with the rest of the head ---
     if n > 2
-        others = mean(data(setdiff(1:n, k), :), 1);
-        c      = corrcoef(data(k, :), others);
-        if abs(c(1, 2)) < P.badChanCorr
-            why{end+1} = sprintf('corr %.2f with other channels', c(1, 2)); %#ok<AGROW>
-        end
+        others   = mean(data(setdiff(1:n, k), :), 1);
+        c        = corrcoef(data(k, :), others);
+        corrs(k) = c(1, 2);
+    end
+end
+
+if isempty(P.badChanCorr)
+    corrThr = robust_bound(abs(corrs(~isnan(corrs))), P.badChanCorrK, ...
+                            P.badChanCorrFloor, P.badChanCorrCeil, 'lower');
+    corrThrSource = sprintf( ...
+        'adaptive: median - %.1fx robust-sigma of this recording, clamped to [%.2f %.2f]', ...
+        P.badChanCorrK, P.badChanCorrFloor, P.badChanCorrCeil);
+else
+    corrThr = P.badChanCorr;
+    corrThrSource = 'fixed (config override)';
+end
+
+badIdx  = [];
+reasons = {};
+
+for k = 1:n
+    why = {};
+
+    if isFlatCh(k)
+        why{end+1} = sprintf('flat for %.1f s', flatSec(k)); %#ok<AGROW>
+    end
+    if ~isnan(corrs(k)) && abs(corrs(k)) < corrThr
+        why{end+1} = sprintf('corr %.2f below threshold %.2f (%s)', ...
+                              corrs(k), corrThr, corrThrSource); %#ok<AGROW>
     end
 
     if ~isempty(why)
@@ -515,4 +600,43 @@ d      = diff([false, v(:)', false]);
 starts = find(d == 1);
 stops  = find(d == -1);
 n      = max(stops - starts);
+end
+
+
+function thr = robust_bound(x, k, floorVal, ceilVal, direction)
+%ROBUST_BOUND  median +/- k robust-sigmas of THIS recording, clamped to a
+%   physiologically sane range.
+%
+%   Every adaptive threshold in this file (bad segments, bad channels,
+%   epoch rejection) goes through here. MEDIAN and MAD are used instead of
+%   MEAN and SD deliberately: the values being screened for are exactly the
+%   artifacts this function exists to flag, and a mean/SD computed on data
+%   that still contains them gets dragged toward the artifacts themselves,
+%   raising (or lowering) the bar precisely where it should not move. MAD
+%   is scaled by 1.4826 so that k means the same thing a familiar "k-sigma"
+%   cutoff would mean on artifact-free, normally distributed data.
+%
+%   floorVal/ceilVal are not part of the statistic -- they are a guardrail
+%   so a session that happens to be unusually uniform (which would shrink
+%   the robust sigma toward zero and make the threshold absurdly tight) or
+%   unusually chaotic (which would inflate it past anything physiologically
+%   plausible) cannot produce a threshold that no longer means anything.
+%
+%   direction: 'upper' for "flag above" (bad segments, epoch rejection),
+%              'lower' for "flag below" (channel correlation).
+
+x = x(:);
+med = median(x, 'omitnan');
+s   = 1.4826 * mad(x, 1);       % robust sigma; mad(...,1) = about the median
+if s <= 0
+    s = eps(max(abs(med), 1));  % degenerate (perfectly uniform) data
+end
+
+if strcmpi(direction, 'upper')
+    thr = med + k * s;
+else
+    thr = med - k * s;
+end
+
+thr = min(max(thr, floorVal), ceilVal);
 end
