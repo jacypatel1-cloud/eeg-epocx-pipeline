@@ -76,6 +76,11 @@ classdef EEGDatasetManagerApp < matlab.apps.AppBase
         OpenFiguresFolderButton matlab.ui.control.Button
         OpenQCButton        matlab.ui.control.Button
         SaveGraphButton     matlab.ui.control.Button
+
+        PrintTab            matlab.ui.container.Tab
+        PrintGrid           matlab.ui.container.GridLayout
+        PrintTable          matlab.ui.control.Table
+        PrintSelectedButton matlab.ui.control.Button
     end
 
     % =====================================================================
@@ -86,6 +91,7 @@ classdef EEGDatasetManagerApp < matlab.apps.AppBase
         DatasetRows         = []    % struct array from list_datasets()
         SelectedDatasetName = ''    % char, name of the selected dataset row
         FileRows            = []    % dir()-style struct array, current dataset's files
+        PrintRows           = []    % parse_recording_name() struct array, current dataset's recordings
     end
 
     % =====================================================================
@@ -151,6 +157,8 @@ classdef EEGDatasetManagerApp < matlab.apps.AppBase
                 app.SelectedDatasetLabel.Text = 'No dataset selected';
                 app.FileRows = [];
                 app.FileTable.Data = cell(0, 3);
+                app.PrintRows = [];
+                app.PrintTable.Data = cell(0, 3);
             end
         end
 
@@ -165,6 +173,7 @@ classdef EEGDatasetManagerApp < matlab.apps.AppBase
 
             app.refreshFileTable();
             app.refreshResultsTab();
+            app.refreshPrintTable();
             app.RunStatusLabel.Text = 'Idle.';
             app.LogTextArea.Value = {''};
         end
@@ -398,6 +407,90 @@ classdef EEGDatasetManagerApp < matlab.apps.AppBase
     end
 
     % =====================================================================
+    % Print tab
+    % =====================================================================
+    methods (Access = private)
+
+        function refreshPrintTable(app)
+            if isempty(app.SelectedDatasetName)
+                app.PrintRows = [];
+                app.PrintTable.Data = cell(0, 3);
+                return
+            end
+
+            dsPath = fullfile(app.cfg.rawDir, app.SelectedDatasetName);
+            try
+                listing = find_recording_files(dsPath);
+            catch
+                listing = [];
+            end
+
+            if isempty(listing)
+                app.PrintRows = [];
+                app.PrintTable.Data = cell(0, 3);
+                return
+            end
+
+            infos = arrayfun(@(d) parse_recording_name(fullfile(d.folder, d.name)), listing);
+            app.PrintRows = infos;
+
+            n = numel(infos);
+            data = cell(n, 3);
+            for i = 1:n
+                pngPath = app.psdPngPathFor(infos(i).name);
+                data{i,1} = false;
+                data{i,2} = infos(i).name;
+                if exist(pngPath, 'file') == 2
+                    data{i,3} = 'Ready to print';
+                else
+                    data{i,3} = 'Not yet run';
+                end
+            end
+            app.PrintTable.Data = data;
+        end
+
+        function PrintSelectedButtonPushed(app, ~)
+            if isempty(app.PrintRows)
+                uialert(app.UIFigure, 'Select a dataset first.', 'Nothing to print');
+                return
+            end
+
+            checkedCol = app.PrintTable.Data(:,1);
+            checked = find(cellfun(@(v) islogical(v) && v, checkedCol));
+            if isempty(checked)
+                uialert(app.UIFigure, 'Check one or more recordings first.', 'Nothing selected');
+                return
+            end
+
+            notReady = {};
+            for idx = checked(:)'
+                name    = app.PrintRows(idx).name;
+                pngPath = app.psdPngPathFor(name);
+                if exist(pngPath, 'file') == 2
+                    winopen(pngPath);
+                else
+                    notReady{end+1} = name; %#ok<AGROW>
+                end
+            end
+
+            if ~isempty(notReady)
+                uialert(app.UIFigure, sprintf(['These recordings have not been run yet, so there is ' ...
+                    'no PSD image to print -- run the pipeline first:\n\n%s'], strjoin(notReady, newline)), ...
+                    'Some Recordings Not Ready', 'Icon', 'warning');
+            end
+        end
+
+        function pngPath = psdPngPathFor(app, recordingName)
+            %PSDPNGPATHFOR  Where RUN_PIPELINE('PlotEach',true) saves a
+            %   recording's individual PSD image -- must match
+            %   PLOT_PSD_STACK's own naming (safe-name + '_psdstack.png',
+            %   no tag) exactly, or the Print tab would never find it.
+            pngPath = fullfile(app.cfg.figDir, [matlab.lang.makeValidName(recordingName) '_psdstack.png']);
+        end
+
+    end
+
+    % =====================================================================
     % Run Pipeline tab
     % =====================================================================
     methods (Access = private)
@@ -457,9 +550,12 @@ classdef EEGDatasetManagerApp < matlab.apps.AppBase
                 % figures are suppressed on screen -- this Results tab already
                 % shows the saved PNG, so a second pop-up window would just be
                 % a redundant copy of the same figure, not additional information.
+                % PlotEach=true: also save one PSD PNG per recording (not just
+                % the three-way comparison), so the Print tab has something to
+                % open for any recording the user selects there.
                 cmd = sprintf(['resultsLocal = run_pipeline(''Dataset'', %s, ' ...
-                    '''ImportOptions'', importOptionsLocal, ''Visible'', false);'], ...
-                    mat2str(name));
+                    '''ImportOptions'', importOptionsLocal, ''Visible'', false, ' ...
+                    '''PlotEach'', true);'], mat2str(name));
                 importOptionsLocal = importOptions; %#ok<NASGU> % read by evalc below
                 captured = evalc(cmd);
 
@@ -484,6 +580,7 @@ classdef EEGDatasetManagerApp < matlab.apps.AppBase
                 pctBad  = 100 * nBad / max(nTotal, 1);
 
                 app.LogTextArea.Value = strsplit(captured, newline);
+                app.refreshPrintTable();   % PlotEach just saved a PNG per recording
 
                 proceed = true;
                 if nBad > 0
@@ -862,6 +959,31 @@ classdef EEGDatasetManagerApp < matlab.apps.AppBase
             app.SaveGraphButton.Layout.Row = 1;
             app.SaveGraphButton.Layout.Column = 4;
             app.SaveGraphButton.ButtonPushedFcn = @(src, event) app.SaveGraphButtonPushed(event);
+
+            % --- Print tab ------------------------------------------------
+            app.PrintTab = uitab(app.RightTabGroup, 'Title', 'Print');
+
+            app.PrintGrid = uigridlayout(app.PrintTab, [2 1]);
+            app.PrintGrid.RowHeight = {'1x', 40};
+            app.PrintGrid.ColumnWidth = {'1x'};
+
+            app.PrintTable = uitable(app.PrintGrid);
+            app.PrintTable.Layout.Row = 1;
+            app.PrintTable.Layout.Column = 1;
+            app.PrintTable.ColumnName = {'Print', 'Recording', 'Status'};
+            app.PrintTable.ColumnFormat = {'logical', 'char', 'char'};
+            app.PrintTable.ColumnEditable = [true false false];
+            app.PrintTable.ColumnWidth = {50, '1x', 120};
+            app.PrintTable.Data = cell(0, 3);
+
+            app.PrintSelectedButton = uibutton(app.PrintGrid, 'push');
+            app.PrintSelectedButton.Text = 'Print Selected';
+            app.PrintSelectedButton.FontWeight = 'bold';
+            app.PrintSelectedButton.BackgroundColor = app.ColorAccent;
+            app.PrintSelectedButton.FontColor = [1 1 1];
+            app.PrintSelectedButton.Layout.Row = 2;
+            app.PrintSelectedButton.Layout.Column = 1;
+            app.PrintSelectedButton.ButtonPushedFcn = @(src, event) app.PrintSelectedButtonPushed(event);
 
             app.UIFigure.Visible = 'on';
         end
