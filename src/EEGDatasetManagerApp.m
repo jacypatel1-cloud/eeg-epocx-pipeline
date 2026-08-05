@@ -101,6 +101,9 @@ classdef EEGDatasetManagerApp < matlab.apps.AppBase
         ModeToggleGrid      matlab.ui.container.GridLayout
         ResearchModeButton  matlab.ui.control.Button
         PatientModeButton   matlab.ui.control.Button
+        StartIntakeButton   matlab.ui.control.Button
+        StopIntakeButton    matlab.ui.control.Button
+        IntakeStatusLabel   matlab.ui.control.Label
 
         % --- Patients mode: left panel (patient list + visit list) ----------
         PatientsPanel       matlab.ui.container.Panel
@@ -1124,6 +1127,32 @@ classdef EEGDatasetManagerApp < matlab.apps.AppBase
             app.setMode('patients');
         end
 
+        function StartIntakeButtonPushed(app, ~)
+            app.IntakeStatusLabel.Text = 'Starting...';
+            drawnow;
+            try
+                url = start_intake_server(app.cfg);
+            catch ME
+                app.IntakeStatusLabel.Text = '';
+                uialert(app.UIFigure, ME.message, 'Could not start intake server', 'Icon', 'error');
+                return
+            end
+            app.IntakeStatusLabel.Text = sprintf('Waiting-room intake running: %s (type this into the iPad''s browser)', url);
+            app.StartIntakeButton.Enable = 'off';
+            app.StopIntakeButton.Enable = 'on';
+        end
+
+        function StopIntakeButtonPushed(app, ~)
+            try
+                stop_intake_server();
+            catch ME
+                uialert(app.UIFigure, ME.message, 'Could not stop intake server', 'Icon', 'warning');
+            end
+            app.IntakeStatusLabel.Text = '';
+            app.StartIntakeButton.Enable = 'on';
+            app.StopIntakeButton.Enable = 'off';
+        end
+
     end
 
     % =====================================================================
@@ -1311,6 +1340,17 @@ classdef EEGDatasetManagerApp < matlab.apps.AppBase
     methods (Access = private)
 
         function refreshVisitView(app)
+            % Pick up anything submitted from the waiting-room iPad since
+            % this visit was last opened, before showing questionnaire
+            % state below -- so the clinician always sees current answers.
+            if ~isempty(app.SelectedVisitRecordingName) && ~isempty(app.SelectedVisitPath)
+                try
+                    import_pending_intake_responses(app.cfg, app.SelectedVisitRecordingName, app.SelectedVisitPath);
+                catch ME
+                    uialert(app.UIFigure, ME.message, 'Could not import intake responses', 'Icon', 'warning');
+                end
+            end
+
             % Scan --------------------------------------------------------
             gotScan = false;
             if ~isempty(app.SelectedVisitRecordingName)
@@ -1592,10 +1632,10 @@ classdef EEGDatasetManagerApp < matlab.apps.AppBase
             app.RefreshDatasetButton.ButtonPushedFcn = @(src, event) app.RefreshDatasetButtonPushed(event);
 
             % --- Mode toggle: Research Datasets vs Patients ------------------
-            app.ModeToggleGrid = uigridlayout(app.MainGrid, [1 3]);
+            app.ModeToggleGrid = uigridlayout(app.MainGrid, [1 5]);
             app.ModeToggleGrid.Layout.Row = 2;
             app.ModeToggleGrid.Layout.Column = 1;
-            app.ModeToggleGrid.ColumnWidth = {160, 160, '1x'};
+            app.ModeToggleGrid.ColumnWidth = {160, 160, 180, 170, '1x'};
             app.ModeToggleGrid.Padding = [0 0 0 0];
             app.ModeToggleGrid.ColumnSpacing = 6;
 
@@ -1610,6 +1650,26 @@ classdef EEGDatasetManagerApp < matlab.apps.AppBase
             app.PatientModeButton.Layout.Row = 1;
             app.PatientModeButton.Layout.Column = 2;
             app.PatientModeButton.ButtonPushedFcn = @(src, event) app.PatientModeButtonPushed(event);
+
+            % Waiting-room intake server controls -- see START_INTAKE_SERVER
+            % for why this is the one place this project makes a network call.
+            app.StartIntakeButton = uibutton(app.ModeToggleGrid, 'push');
+            app.StartIntakeButton.Text = 'Start Waiting Room Intake';
+            app.StartIntakeButton.Layout.Row = 1;
+            app.StartIntakeButton.Layout.Column = 3;
+            app.StartIntakeButton.ButtonPushedFcn = @(src, event) app.StartIntakeButtonPushed(event);
+
+            app.StopIntakeButton = uibutton(app.ModeToggleGrid, 'push');
+            app.StopIntakeButton.Text = 'Stop Waiting Room Intake';
+            app.StopIntakeButton.Layout.Row = 1;
+            app.StopIntakeButton.Layout.Column = 4;
+            app.StopIntakeButton.Enable = 'off';
+            app.StopIntakeButton.ButtonPushedFcn = @(src, event) app.StopIntakeButtonPushed(event);
+
+            app.IntakeStatusLabel = uilabel(app.ModeToggleGrid);
+            app.IntakeStatusLabel.Text = '';
+            app.IntakeStatusLabel.Layout.Row = 1;
+            app.IntakeStatusLabel.Layout.Column = 5;
 
             % --- Body: left dataset list, right tabs ---------------------
             app.BodyGrid = uigridlayout(app.MainGrid, [1 2]);

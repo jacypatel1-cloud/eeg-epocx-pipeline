@@ -14,6 +14,36 @@ Project rules for any AI agent writing code in this repo. Read this before editi
 - **Input format:** EDF or BDF. Import with `pop_biosig`. CSV exports from Emotiv are a
   secondary path only.
 
+## Waiting-room intake exception (explicitly authorized, narrowly scoped)
+
+The two hard constraints above ("MATLAB only", "no network calls at runtime") have exactly
+**one** documented exception, authorized explicitly by the project owner (not inferred) to
+let a patient fill out questionnaires on an iPad in the waiting room, since a tablet cannot
+run a MATLAB App Designer app:
+
+- **Lives entirely in `webintake/`**, never `src/`. `webintake/server.py` (Python 3,
+  standard library only, no dependencies) is the one non-MATLAB file in this deliverable —
+  mirroring how `Tools/` already holds the non-MATLAB MCP server helper alongside the
+  MATLAB-only pipeline.
+- **LAN only, never the internet.** The server binds to the machine's own private LAN IPv4
+  address (see `get_lan_ip()` in `webintake/server.py`) — never `0.0.0.0`, never a public
+  interface, no port forwarding, no cloud anything. It only runs while a clinician has
+  deliberately clicked "Start Waiting Room Intake" in the app.
+- **One job, nothing else.** It serves a questionnaire form and writes submitted answers to
+  a plain JSON file under that patient's own visit folder
+  (`data/patients/<id>/visits/<date>/questionnaire_intake/`). It does not score anything,
+  does not touch `qc_summary.csv` or any pipeline output, and never runs the EEG pipeline.
+  `import_pending_intake_responses.m` (MATLAB) picks the raw file up, scores it with the
+  same `score_questionnaire.m` engine used everywhere else, and deletes it once processed.
+- **Item wording is exported from MATLAB, never hand-copied into Python** —
+  `export_questionnaire_definitions_json.m` writes `webintake/questionnaire_definitions.json`
+  from `questionnaire_definitions.m`, so the iPad form and the app can never show different
+  text for the same instrument.
+
+Do not extend this exception to anything else. Any other future network or non-MATLAB need
+requires the same explicit, in-writing authorization from the project owner this one got —
+never assume it by analogy.
+
 ## Required pipeline order
 
 1. Import EDF/BDF, apply channel locations from `data/emotivX_channels_location.ced`
@@ -42,10 +72,12 @@ the pipeline body.
 ```
 data/raw/         EDF/BDF files as recorded — never modified
 data/processed/   cleaned .set/.fdt files, one per recording
+data/patients/    patient profiles + visit history (see CREATE_PATIENT_PROFILE.m)
 figures/          PSD plots
-results/          exported spectra, QC tables
+results/          exported spectra, QC tables, questionnaire scores
 src/              all MATLAB code
 toolboxes/        EEGLAB lives here (git-ignored)
+webintake/        the ONE non-MATLAB exception -- see "Waiting-room intake exception" above
 ```
 
 ## Code style

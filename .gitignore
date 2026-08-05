@@ -14,6 +14,18 @@ data/processed/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
 
+# Patient profiles (real names, DOBs) and their visit recordings -- even
+# more sensitive than the anonymized research datasets above, and easy to
+# forget precisely because this folder didn't exist when the rules above
+# were first written. Same reasoning: the protection only works if it
+# covers the whole folder, no carve-outs. No .gitkeep needed -- like
+# data/raw and data/processed, setup_paths.m creates this folder itself.
+data/patients/
+
+# Trash bin for deleted datasets/files (see move_to_trash.m) -- this is
+# still real recording/patient data, just relocated, not gone.
+data/.trash/
+
 # The channel location file is NOT patient data. It is a small
 # text file describing where the 14 electrodes sit, and the code
 # needs it, so it is tracked deliberately.
@@ -25,6 +37,13 @@ figures/*
 results/*
 !figures/.gitkeep
 !results/.gitkeep
+
+# Generated at runtime by the waiting-room intake server (see
+# export_questionnaire_definitions_json.m / start_intake_server.m) --
+# webintake/server.py itself (the actual source) IS tracked.
+webintake/questionnaire_definitions.json
+webintake/server_status.json
+webintake/__pycache__/
 
 # EEGLAB and any other third-party toolbox (~150 MB)
 toolboxes/
