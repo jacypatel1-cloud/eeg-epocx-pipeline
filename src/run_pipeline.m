@@ -9,7 +9,11 @@ function results = run_pipeline(varargin)
 %       'Dataset'       which data/raw/<name> subfolder to process. Default:
 %                       '' -- the most recently modified subfolder, i.e.
 %                       whatever was extracted most recently. See
-%                       SELECT_DATASET.
+%                       SELECT_DATASET. Ignored if 'DatasetPath' is given.
+%       'DatasetPath'   process this exact folder instead of a data/raw/
+%                       subfolder -- e.g. a patient visit folder under
+%                       data/patients/<id>/visits/<date>. Bypasses
+%                       SELECT_DATASET entirely. Default: '' (use 'Dataset').
 %       'ImportOptions' cell array forwarded to IMPORT_RECORDING for every
 %                       file, e.g. {'SampleRate', 128, 'ChannelOrder', ...}.
 %                       Needed for formats that carry no metadata of their
@@ -47,6 +51,7 @@ function results = run_pipeline(varargin)
 p = inputParser;
 p.addParameter('Config',        [],    @(x) isempty(x) || isstruct(x));
 p.addParameter('Dataset',       "",    @(x) ischar(x) || isstring(x));
+p.addParameter('DatasetPath',   "",    @(x) ischar(x) || isstring(x));
 p.addParameter('ImportOptions', {},    @iscell);
 p.addParameter('Subject',       "",    @(x) ischar(x) || isstring(x));
 p.addParameter('Movement',      "",    @(x) ischar(x) || isstring(x));
@@ -62,7 +67,15 @@ cfg = setup_paths();
 P = opt.Config;
 if isempty(P); P = pipeline_config(); end
 
-datasetDir = select_dataset(cfg, 'Dataset', opt.Dataset);
+if strlength(string(opt.DatasetPath)) > 0
+    datasetDir = char(opt.DatasetPath);
+    if exist(datasetDir, 'dir') ~= 7
+        error('run_pipeline:noSuchPath', 'DatasetPath does not exist:\n  %s', datasetDir);
+    end
+    fprintf('Dataset: %s (explicit path)\n', datasetDir);
+else
+    datasetDir = select_dataset(cfg, 'Dataset', opt.Dataset);
+end
 
 % =========================================================================
 % Find the recordings
