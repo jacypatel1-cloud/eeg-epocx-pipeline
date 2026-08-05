@@ -28,8 +28,9 @@ cfg.toolboxes = fullfile(cfg.root, 'toolboxes');
 % would show up as a bogus dataset in the app. Already covered by the
 % existing blanket "data/" gitignore rule.
 cfg.trashDir  = fullfile(cfg.root, 'data', '.trash');
+cfg.patientsDir = fullfile(cfg.root, 'data', 'patients');
 
-folders = {cfg.rawDir, cfg.procDir, cfg.figDir, cfg.resultDir, cfg.toolboxes, cfg.trashDir};
+folders = {cfg.rawDir, cfg.procDir, cfg.figDir, cfg.resultDir, cfg.toolboxes, cfg.trashDir, cfg.patientsDir};
 for k = 1:numel(folders)
     if ~exist(folders{k}, 'dir')
         mkdir(folders{k});
