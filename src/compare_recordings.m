@@ -70,10 +70,19 @@ end
 yFloor = min(allY);
 yRange = max(allY) - yFloor;
 if yRange <= 0; yRange = 1; end
-spacing = yRange * 0.50;
+% spacing must exceed yRange (not be a fraction of it) or the tallest strip
+% is guaranteed to collide with the strip above it -- see PLOT_PSD_STACK for
+% the full explanation. 1.25x leaves a clear 25% gap between strips.
+spacing = yRange * 1.25;
 
 nCh  = numel(specs(1).labels);
 cmap = jet(nCh);
+
+if strcmpi(opt.Scale, 'db')
+    yTickFormat = '%.0f';
+else
+    yTickFormat = '%.2g';
+end
 
 % -------------------------------------------------------------------------
 % Draw one column per recording
@@ -94,12 +103,13 @@ for r = 1:nRec
 
     style = struct('yFloor', yFloor, 'yRange', yRange, 'spacing', spacing, ...
                    'cmap', cmap, 'showLabels', r == 1, 'labelSize', 11, ...
-                   'scale', opt.Scale);
+                   'scale', opt.Scale, 'showYScale', true, ...
+                   'yTickFormat', yTickFormat);
 
     draw_psd_strips(ax, S, style);
 
     fSpan = [S.f(1) S.f(end)];
-    xlim(ax, [fSpan(1) - 0.06*diff(fSpan), fSpan(2)]);
+    xlim(ax, [fSpan(1) - 0.06*diff(fSpan), fSpan(2) + 0.16*diff(fSpan)]);
     ylim(ax, [-spacing*0.40, (nCh-1)*spacing + yRange*1.02]);
     axis(ax, 'off');
 

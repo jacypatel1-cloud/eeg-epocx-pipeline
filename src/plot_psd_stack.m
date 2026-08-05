@@ -54,11 +54,18 @@ nCh = size(Y, 2);
 % -------------------------------------------------------------------------
 % One common vertical scale for every channel. If each strip were normalised
 % to its own maximum, a quiet channel would look identical to a loud one.
+%
+% SPACING MUST EXCEED yRange, NOT BE A FRACTION OF IT. A strip's curve rises
+% (value - yFloor) above its baseline, which can reach the full yRange -- so
+% spacing < yRange guarantees strips collide with the one above them (this
+% was the cause of the overlapping-graphs bug). 1.25x leaves a clear 25% gap
+% of blank space between the tallest possible strip and the baseline above
+% it, which is also where the per-strip amplitude ticks live.
 % -------------------------------------------------------------------------
 yFloor = min(Y(:));
 yRange = max(Y(:)) - yFloor;
 if yRange <= 0; yRange = 1; end
-spacing = yRange * 0.50;
+spacing = yRange * 1.25;
 
 if isempty(opt.Colormap)
     cmap = jet(nCh);
@@ -77,18 +84,27 @@ figHandle = figure('Color', 'w', 'Position', [120 40 780 1000], ...
 
 ax = axes(figHandle, 'Position', [0.14 0.07 0.82 0.88]);
 
+if strcmpi(opt.Scale, 'db')
+    yTickFormat = '%.0f';
+else
+    yTickFormat = '%.2g';
+end
+
 style = struct('yFloor', yFloor, 'yRange', yRange, 'spacing', spacing, ...
                'cmap', cmap, 'showLabels', true, 'labelSize', 13, ...
-               'scale', opt.Scale);
+               'scale', opt.Scale, 'showYScale', true, ...
+               'yTickFormat', yTickFormat);
 
 draw_psd_strips(ax, S, style);
 
 % -------------------------------------------------------------------------
-% Axes: the reference figure has no frame, no y-axis and no gridlines. Only
-% the frequency scale along the bottom.
+% Axes: the reference figure has no frame and no gridlines. A hand-drawn
+% frequency scale runs along the bottom; the per-strip amplitude ticks drawn
+% by DRAW_PSD_STRIPS sit just past the right edge, so xlim needs headroom on
+% both sides to avoid clipping either one.
 % -------------------------------------------------------------------------
 fSpan = [S.f(1) S.f(end)];
-xlim(ax, [fSpan(1) - 0.05*diff(fSpan), fSpan(2)]);
+xlim(ax, [fSpan(1) - 0.05*diff(fSpan), fSpan(2) + 0.14*diff(fSpan)]);
 ylim(ax, [-spacing*0.35, (nCh-1)*spacing + yRange*1.02]);
 
 axis(ax, 'off');   % remove everything, then draw only what we want back

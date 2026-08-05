@@ -6,13 +6,15 @@ function yBase = draw_psd_strips(ax, S, style)
 %   of each channel.
 %
 %   style is a struct with fields:
-%       yFloor      value mapped to a strip's baseline
-%       yRange      full value range (sets strip height)
-%       spacing     vertical distance between baselines
-%       cmap        nCh x 3 colours, row 1 = top channel
-%       showLabels  draw channel names at the left
-%       labelSize   font size for those names
-%       scale       'db' | 'linear'
+%       yFloor       value mapped to a strip's baseline
+%       yRange       full value range (sets strip height)
+%       spacing      vertical distance between baselines
+%       cmap         nCh x 3 colours, row 1 = top channel
+%       showLabels   draw channel names at the left
+%       labelSize    font size for those names
+%       scale        'db' | 'linear'
+%       showYScale   draw an amplitude tick ruler on the right of each strip
+%       yTickFormat  sprintf format for the tick numbers, e.g. '%.0f'
 %
 %   WHY THIS IS ITS OWN FILE
 %   Both the single-recording viewer and the multi-recording comparison draw
@@ -27,6 +29,24 @@ function yBase = draw_psd_strips(ax, S, style)
 %   tick marks, which is what lets the eye follow a single frequency down
 %   the page across all 14 channels.
 %
+%   WHY spacing MUST BE AT LEAST yRange
+%   A strip's curve height above its baseline is (value - yFloor), which by
+%   construction can reach the full yRange (that is what yRange means: the
+%   spread from the quietest to the loudest point across everything being
+%   drawn). If the caller sets spacing smaller than yRange, the tallest strip
+%   is geometrically guaranteed to rise into the strip above it -- that is
+%   not a rare edge case, it is the routine appearance of a normal PSD peak.
+%   Callers must pass spacing >= yRange, with headroom on top for a visible
+%   gap between strips. This function does not defend against a caller
+%   passing too little; PLOT_PSD_STACK and COMPARE_RECORDINGS are
+%   responsible for choosing spacing correctly.
+%
+%   PER-STRIP Y-AXIS
+%   Because every strip shares one scale, the same three tick values (floor,
+%   mid, peak) are correct on every row -- but readers should not have to
+%   hold "the scale" in their head while scanning fourteen rows. A small
+%   tick ruler is drawn at the right edge of each strip for that reason.
+%
 %   See also PLOT_PSD_STACK, COMPARE_RECORDINGS, COMPUTE_PSD.
 
 if strcmpi(style.scale, 'db')
@@ -37,6 +57,9 @@ end
 
 f   = S.f(:);
 nCh = size(Y, 2);
+
+if ~isfield(style, 'showYScale');  style.showYScale  = true;   end
+if ~isfield(style, 'yTickFormat'); style.yTickFormat  = '%.0f'; end
 
 yBase = zeros(nCh, 1);
 
@@ -67,6 +90,26 @@ for k = 1:nCh
     for tx = tickX
         plot(ax, [tx tx], [base, base - tickH], ...
              'Color', [0.35 0.35 0.35], 'LineWidth', 0.7);
+    end
+
+    % Amplitude tick ruler at the right edge of the strip. Three ticks --
+    % floor, mid, peak of the SHARED scale (not this channel's own min/max,
+    % which would misrepresent a shared-scale figure as normalised). Every
+    % row shows the same three numbers on purpose: a reader looking at any
+    % single row, without having to scroll back to a legend, can read off
+    % what a given curve height means.
+    if style.showYScale
+        tickLen = 0.012 * (f(end) - f(1));
+        for tf = [0 0.5 1]
+            ty  = base + tf * style.yRange;
+            val = style.yFloor + tf * style.yRange;
+            plot(ax, [f(end), f(end) + tickLen], [ty ty], ...
+                 'Color', [0.35 0.35 0.35], 'LineWidth', 0.7);
+            text(ax, f(end) + tickLen * 1.6, ty, sprintf(style.yTickFormat, val), ...
+                 'HorizontalAlignment', 'left', 'VerticalAlignment', 'middle', ...
+                 'FontSize', max(6, style.labelSize * 0.55), ...
+                 'Color', [0.4 0.4 0.4]);
+        end
     end
 
     % Channel name, to the left of the axis, vertically centred on the strip.
