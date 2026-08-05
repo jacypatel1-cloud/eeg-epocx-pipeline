@@ -79,7 +79,7 @@ end
 % -------------------------------------------------------------------------
 % Draw
 % -------------------------------------------------------------------------
-figHandle = figure('Color', 'w', 'Position', [120 40 780 1000], ...
+figHandle = figure('Color', 'w', 'Position', fit_figure_to_screen(780, 1000), ...
                    'Name', sprintf('PSD - %s', S.setname));
 
 ax = axes(figHandle, 'Position', [0.14 0.07 0.82 0.88]);
