@@ -91,6 +91,11 @@ classdef EEGDatasetManagerApp < matlab.apps.AppBase
         RestoreButton       matlab.ui.control.Button
         DeleteForeverButton matlab.ui.control.Button
         EmptyTrashButton    matlab.ui.control.Button
+
+        QuestionnairesTab   matlab.ui.container.Tab
+        QuestionnairesGrid  matlab.ui.container.GridLayout
+        QuestionnaireRecordingDropdown matlab.ui.control.DropDown
+        QuestionnaireSubTabGroup matlab.ui.container.TabGroup
     end
 
     % =====================================================================
@@ -103,6 +108,13 @@ classdef EEGDatasetManagerApp < matlab.apps.AppBase
         FileRows            = []    % dir()-style struct array, current dataset's files
         PrintRows           = []    % parse_recording_name() struct array, current dataset's recordings
         TrashRows           = []    % struct array from list_trash()
+        QuestionnaireDefs   = []    % cached questionnaire_definitions() output
+        % containers.Map is a HANDLE class -- initialized fresh per instance
+        % in the constructor (see EEGDatasetManagerApp below), NOT defaulted
+        % here, or every instance of this app would share the same Map.
+        QuestionnaireControls
+        QuestionnaireResultLabels
+        SelectedQuestionnaireRecording = ''
     end
 
     % =====================================================================
@@ -129,6 +141,7 @@ classdef EEGDatasetManagerApp < matlab.apps.AppBase
                 evalc('cfgLocal = setup_paths();');
                 app.cfg = cfgLocal;
             end
+            app.QuestionnaireDefs = questionnaire_definitions();
             app.refreshDatasetTable();
             app.refreshResultsTab();
             app.refreshTrashTable();
@@ -171,6 +184,7 @@ classdef EEGDatasetManagerApp < matlab.apps.AppBase
                 app.FileTable.Data = cell(0, 3);
                 app.PrintRows = [];
                 app.PrintTable.Data = cell(0, 3);
+                app.refreshQuestionnaireRecordingList();
             end
         end
 
@@ -186,6 +200,7 @@ classdef EEGDatasetManagerApp < matlab.apps.AppBase
             app.refreshFileTable();
             app.refreshResultsTab();
             app.refreshPrintTable();
+            app.refreshQuestionnaireRecordingList();
             app.RunStatusLabel.Text = 'Idle.';
             app.LogTextArea.Value = {''};
         end
@@ -607,6 +622,129 @@ classdef EEGDatasetManagerApp < matlab.apps.AppBase
             if ~isempty(failures)
                 uialert(app.UIFigure, strjoin(failures, newline), 'Some items could not be deleted', ...
                     'Icon', 'warning');
+            end
+        end
+
+    end
+
+    % =====================================================================
+    % Questionnaires tab
+    % =====================================================================
+    methods (Access = private)
+
+        function refreshQuestionnaireRecordingList(app)
+            dd = app.QuestionnaireRecordingDropdown;
+            if isempty(app.SelectedDatasetName)
+                dd.Items = {'-- select a dataset --'};
+                dd.ItemsData = {''};
+                dd.Value = '';
+                app.SelectedQuestionnaireRecording = '';
+                app.loadQuestionnaireFormForRecording();
+                return
+            end
+
+            dsPath = fullfile(app.cfg.rawDir, app.SelectedDatasetName);
+            try
+                listing = find_recording_files(dsPath);
+            catch
+                listing = [];
+            end
+            if isempty(listing)
+                dd.Items = {'-- no recordings --'};
+                dd.ItemsData = {''};
+                dd.Value = '';
+                app.SelectedQuestionnaireRecording = '';
+                app.loadQuestionnaireFormForRecording();
+                return
+            end
+
+            infos = arrayfun(@(d) parse_recording_name(fullfile(d.folder, d.name)), listing);
+            names = {infos.name};
+            dd.Items = names;
+            dd.ItemsData = names;
+            dd.Value = names{1};
+            app.SelectedQuestionnaireRecording = names{1};
+            app.loadQuestionnaireFormForRecording();
+        end
+
+        function QuestionnaireRecordingChanged(app, event)
+            app.SelectedQuestionnaireRecording = event.Value;
+            app.loadQuestionnaireFormForRecording();
+        end
+
+        function loadQuestionnaireFormForRecording(app)
+            %LOADQUESTIONNAIREFORMFORRECORDING  Populate every instrument's
+            %   form with whatever was already saved for the currently
+            %   picked recording (or reset to unanswered if nothing was).
+            saved = struct();
+            if ~isempty(app.SelectedQuestionnaireRecording)
+                saved = load_questionnaire_results(app.cfg, app.SelectedQuestionnaireRecording);
+            end
+
+            for qi = 1:numel(app.QuestionnaireDefs)
+                Q = app.QuestionnaireDefs(qi);
+                controls = app.QuestionnaireControls(Q.id);
+                resultLbl = app.QuestionnaireResultLabels(Q.id);
+
+                if isfield(saved, Q.id)
+                    r = saved.(Q.id);
+                    for it = 1:numel(controls)
+                        controls(it).Value = r.responses(it);
+                    end
+                    flagTxt = '';
+                    if r.flagged
+                        flagTxt = '  [SELF-HARM ITEM ENDORSED -- see item 9]';
+                    end
+                    resultLbl.Text = sprintf('Saved: %d (%s)%s', r.total, r.band, flagTxt);
+                    if r.flagged
+                        resultLbl.FontColor = app.ColorDanger;
+                    else
+                        resultLbl.FontColor = [0.2 0.5 0.2];
+                    end
+                else
+                    for it = 1:numel(controls)
+                        controls(it).Value = -1;   % "not yet answered" sentinel, see buildQuestionnaireSubTab
+                    end
+                    resultLbl.Text = 'Not yet completed for this recording.';
+                    resultLbl.FontColor = [0.5 0.5 0.5];
+                end
+            end
+        end
+
+        function SaveQuestionnaireButtonPushed(app, ~, instrumentId)
+            if isempty(app.SelectedQuestionnaireRecording)
+                uialert(app.UIFigure, 'Select a recording first.', 'No recording selected');
+                return
+            end
+
+            Q = app.QuestionnaireDefs(strcmp({app.QuestionnaireDefs.id}, instrumentId));
+            controls = app.QuestionnaireControls(instrumentId);
+            responses = arrayfun(@(c) c.Value, controls);
+
+            if any(responses == -1)
+                uialert(app.UIFigure, ...
+                    sprintf('Answer every item before saving (%d of %d still unanswered).', ...
+                            sum(responses == -1), numel(responses)), ...
+                    'Incomplete', 'Icon', 'warning');
+                return
+            end
+
+            try
+                result = score_questionnaire(Q, responses);
+                save_questionnaire_result(app.cfg, app.SelectedQuestionnaireRecording, result);
+            catch ME
+                uialert(app.UIFigure, ME.message, 'Could not save', 'Icon', 'error');
+                return
+            end
+
+            app.loadQuestionnaireFormForRecording();
+
+            if result.flagged
+                uialert(app.UIFigure, ...
+                    sprintf(['%s''s self-harm screening item was endorsed for recording "%s".\n\n' ...
+                             'This is a flag for clinical attention -- no automated action has been ' ...
+                             'or will be taken.'], Q.title, app.SelectedQuestionnaireRecording), ...
+                    'Clinical Attention Flag', 'Icon', 'warning');
             end
         end
 
@@ -1275,7 +1413,129 @@ classdef EEGDatasetManagerApp < matlab.apps.AppBase
             app.EmptyTrashButton.Layout.Column = 3;
             app.EmptyTrashButton.ButtonPushedFcn = @(src, event) app.EmptyTrashButtonPushed(event);
 
+            % --- Questionnaires tab ------------------------------------------
+            app.QuestionnairesTab = uitab(app.RightTabGroup, 'Title', 'Questionnaires');
+
+            app.QuestionnairesGrid = uigridlayout(app.QuestionnairesTab, [2 1]);
+            app.QuestionnairesGrid.RowHeight = {36, '1x'};
+            app.QuestionnairesGrid.ColumnWidth = {'1x'};
+
+            app.QuestionnaireRecordingDropdown = uidropdown(app.QuestionnairesGrid);
+            app.QuestionnaireRecordingDropdown.Layout.Row = 1;
+            app.QuestionnaireRecordingDropdown.Layout.Column = 1;
+            app.QuestionnaireRecordingDropdown.Items = {'-- select a dataset --'};
+            app.QuestionnaireRecordingDropdown.ItemsData = {''};
+            app.QuestionnaireRecordingDropdown.ValueChangedFcn = ...
+                @(src, event) app.QuestionnaireRecordingChanged(event);
+
+            app.QuestionnaireSubTabGroup = uitabgroup(app.QuestionnairesGrid);
+            app.QuestionnaireSubTabGroup.Layout.Row = 2;
+            app.QuestionnaireSubTabGroup.Layout.Column = 1;
+
+            defs = questionnaire_definitions();
+            for qi = 1:numel(defs)
+                app.buildQuestionnaireSubTab(app.QuestionnaireSubTabGroup, defs(qi));
+            end
+
             app.UIFigure.Visible = 'on';
+        end
+
+        function buildQuestionnaireSubTab(app, parentTabGroup, Q)
+            %BUILDQUESTIONNAIRESUBTAB  One instrument's full form, built once
+            %   from its QUESTIONNAIRE_DEFINITIONS entry -- avoids five
+            %   near-duplicate hand-built forms for PHQ-9/GAD-7/ISI/MMQ-9/CBS.
+            tabTitle = Q.id;
+            if Q.placeholder
+                tabTitle = [Q.id ' *'];
+            end
+            tab = uitab(parentTabGroup, 'Title', tabTitle);
+
+            outerGrid = uigridlayout(tab, [3 1]);
+            outerGrid.RowHeight = {'fit', '1x', 60};
+            outerGrid.ColumnWidth = {'1x'};
+
+            headerText = sprintf('%s\n%s', Q.title, Q.instructions);
+            if Q.placeholder
+                headerText = sprintf(['%s\n\nPLACEHOLDER INSTRUMENT -- item text below is not the ' ...
+                    'verified %s wording. Replace with the licensed source before clinical use.'], ...
+                    headerText, Q.id);
+            end
+            header = uilabel(outerGrid);
+            header.Layout.Row = 1;
+            header.Layout.Column = 1;
+            header.Text = headerText;
+            header.WordWrap = 'on';
+            if Q.placeholder
+                header.FontColor = app.ColorDanger;
+            end
+
+            % Scrollable list of items -- a uipanel with Scrollable='on'
+            % holding a grid whose row heights are fixed (not '1x'), so the
+            % grid's total height can exceed the panel's viewport and
+            % actually scroll, rather than being squeezed to fit.
+            scrollPanel = uipanel(outerGrid);
+            scrollPanel.Layout.Row = 2;
+            scrollPanel.Layout.Column = 1;
+            scrollPanel.Scrollable = 'on';
+            scrollPanel.BorderType = 'none';
+
+            nItems = numel(Q.items);
+            rowH = 56;
+            itemGrid = uigridlayout(scrollPanel, [nItems 1]);
+            itemGrid.RowHeight = repmat({rowH}, 1, nItems);
+            itemGrid.ColumnWidth = {'1x'};
+            itemGrid.RowSpacing = 4;
+
+            controls = matlab.ui.control.DropDown.empty;
+            for it = 1:nItems
+                itemRowGrid = uigridlayout(itemGrid, [1 2]);
+                itemRowGrid.Layout.Row = it;
+                itemRowGrid.Layout.Column = 1;
+                itemRowGrid.ColumnWidth = {'1x', 240};
+                itemRowGrid.Padding = [0 0 0 0];
+
+                itemLabel = uilabel(itemRowGrid);
+                itemLabel.Text = sprintf('%d. %s', it, Q.items(it).text);
+                itemLabel.WordWrap = 'on';
+                itemLabel.Layout.Row = 1;
+                itemLabel.Layout.Column = 1;
+
+                dd = uidropdown(itemRowGrid);
+                dd.Layout.Row = 1;
+                dd.Layout.Column = 2;
+                % -1 (not NaN) is the "not yet answered" sentinel: uidropdown
+                % matches Value against ItemsData by exact equality, and
+                % NaN == NaN is false in MATLAB, so NaN can never be found as
+                % a valid Value -- none of these instruments' scales use a
+                % negative response value, so -1 is unambiguous.
+                dd.Items = ['-- Select --', Q.items(it).responseLabels];
+                dd.ItemsData = [-1, Q.items(it).responseValues];
+                dd.Value = -1;
+                controls(end+1) = dd; %#ok<AGROW>
+            end
+            app.QuestionnaireControls(Q.id) = controls;
+
+            footerGrid = uigridlayout(outerGrid, [1 2]);
+            footerGrid.Layout.Row = 3;
+            footerGrid.Layout.Column = 1;
+            footerGrid.ColumnWidth = {150, '1x'};
+            footerGrid.Padding = [0 0 0 0];
+
+            saveBtn = uibutton(footerGrid, 'push');
+            saveBtn.Text = 'Save Responses';
+            saveBtn.FontWeight = 'bold';
+            saveBtn.BackgroundColor = app.ColorAccent;
+            saveBtn.FontColor = [1 1 1];
+            saveBtn.Layout.Row = 1;
+            saveBtn.Layout.Column = 1;
+            saveBtn.ButtonPushedFcn = @(src, event) app.SaveQuestionnaireButtonPushed(event, Q.id);
+
+            resultLbl = uilabel(footerGrid);
+            resultLbl.Text = 'Not yet completed for this recording.';
+            resultLbl.FontColor = [0.5 0.5 0.5];
+            resultLbl.Layout.Row = 1;
+            resultLbl.Layout.Column = 2;
+            app.QuestionnaireResultLabels(Q.id) = resultLbl;
         end
 
     end
@@ -1289,6 +1549,11 @@ classdef EEGDatasetManagerApp < matlab.apps.AppBase
             if ~isempty(varargin) && isstruct(varargin{1})
                 app.cfg = varargin{1};
             end
+
+            % Fresh per instance -- containers.Map is a handle class, so a
+            % property default would instead be shared by every instance.
+            app.QuestionnaireControls = containers.Map();
+            app.QuestionnaireResultLabels = containers.Map();
 
             createComponents(app)
             registerApp(app, app.UIFigure)
