@@ -28,7 +28,9 @@ EEG/
 ├── 2 - Claude Code.bat    ← then this, if you want Claude Code
 │
 ├── data/
-│   ├── raw/               ← PUT NEW RECORDINGS HERE (.edf, .bdf or .csv)
+│   ├── raw/               ← PUT NEW RECORDINGS HERE, one subfolder per dataset
+│   │   ├── Harvard/       ←   e.g. data/raw/Harvard/... (.edf, .bdf, .csv or .dat)
+│   │   └── Zenodo/        ←   a second dataset never mixes with the first
 │   └── processed/         ← cleaned recordings appear here automatically
 │
 ├── figures/               ← all the plots appear here
@@ -58,7 +60,7 @@ else can be ignored until you want it.
 |---|---|
 | See the plots | `figures/` |
 | See what the pipeline decided for each recording | `results/qc_summary.csv` |
-| Add new recordings | `data/raw/` |
+| Add new recordings | `data/raw/<a folder named for the dataset>/` |
 
 ---
 
@@ -99,23 +101,27 @@ ever want to.
 | 1 | `setup_paths.m` | Finds EEGLAB, creates folders |
 | 2 | `check_env.m` | Confirms everything is installed |
 | 3 | `pipeline_config.m` | **Every setting and threshold lives here** |
-| 4 | `parse_recording_name.m` | Works out who, what and when from the filename |
-| 5 | `import_recording.m` | Loads the file, sending EDF/BDF and CSV to the right reader |
-| 6 | `import_emotiv_csv.m` | Reads Emotiv CSV exports |
-| 7 | `preprocess_recording.m` | The 8 cleaning stages |
-| 8 | `compute_psd.m` | Works out the power spectrum |
-| 9 | `draw_psd_strips.m` | Draws the coloured bands |
-| 10 | `plot_psd_stack.m` | One recording, one page |
-| 11 | `pick_three.m` | Chooses first / second-to-last / last |
-| 12 | `compare_recordings.m` | Three recordings side by side |
-| 13 | `run_pipeline.m` | **Runs all of the above over every file** |
+| 4 | `select_dataset.m` | Picks which dataset subfolder to process — latest one by default |
+| 5 | `parse_recording_name.m` | Works out who, what and when from the filename |
+| 6 | `import_recording.m` | Loads the file, sending EDF/BDF, CSV and DAT to the right reader |
+| 7 | `import_emotiv_csv.m` | Reads Emotiv CSV exports |
+| 8 | `import_matrix_dat.m` | Reads headerless numeric-matrix files (needs sample rate + channel order given explicitly) |
+| 9 | `preprocess_recording.m` | The 8 cleaning stages |
+| 10 | `compute_psd.m` | Works out the power spectrum |
+| 11 | `draw_psd_strips.m` | Draws the coloured bands |
+| 12 | `plot_psd_stack.m` | One recording, one page |
+| 13 | `fit_figure_to_screen.m` | Keeps the plot window's title bar on-screen, whatever monitor it opens on |
+| 14 | `pick_three.m` | Chooses first / second-to-last / last |
+| 15 | `compare_recordings.m` | Three recordings side by side |
+| 16 | `run_pipeline.m` | **Runs all of the above over every file** |
 
-Four extras, not part of the main run:
+Five extras, not part of the main run:
 
 | File | What it does |
 |---|---|
 | `qc_report.m` | Detailed per-channel statistics for one recording |
-| `make_test_fixture.m` | Makes fake data with a known answer, to check the maths |
+| `make_test_fixture.m` | Makes fake data with a known answer, to check the maths — including deliberately hostile data for stress-testing |
+| `import_dataset_zip.m` | Extracts a downloaded dataset zip into its own `data/raw/` subfolder in one step |
 | `test_edf_roundtrip.m` | Checks the EDF reader puts the right signal under the right channel name |
 | `get_sample_data.m` | Where to download public sample recordings |
 | `sync_to_github.m` | Saves your changes to GitHub in one line |
