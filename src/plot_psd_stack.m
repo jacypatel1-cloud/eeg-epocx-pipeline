@@ -15,6 +15,11 @@ function figHandle = plot_psd_stack(S, cfg, varargin)
 %       'ShowMethod' small footnote naming the method.     Default true
 %       'Colormap'   any Nx3 colormap.                     Default jet
 %       'Visible'    show the figure window on screen.     Default true
+%       'TargetAxes' draw into this axes/uiaxes instead of creating a new
+%                    figure. Used by the app's single-visit patient view to
+%                    render a live, interactive scan directly in its own
+%                    panel. 'Save'/'ShowMethod' are ignored in this mode.
+%                    Default: [] (creates its own figure).
 %
 %   ON THE DEFAULTS
 %   Title is OFF and there is no y-axis, because the reference figure has
@@ -42,8 +47,10 @@ p.addParameter('Title',      '',    @(x) ischar(x) || isstring(x));
 p.addParameter('ShowMethod', true,  @islogical);
 p.addParameter('Colormap',   [],    @(x) isempty(x) || size(x,2) == 3);
 p.addParameter('Visible',    true,  @islogical);
+p.addParameter('TargetAxes', [],    @(x) isempty(x) || (isscalar(x) && isgraphics(x)));
 p.parse(S, cfg, varargin{:});
 opt = p.Results;
+useTargetAxes = ~isempty(opt.TargetAxes);
 
 if strcmpi(opt.Scale, 'db')
     Y = S.psdDb;
@@ -81,12 +88,18 @@ end
 % -------------------------------------------------------------------------
 % Draw
 % -------------------------------------------------------------------------
-visStr = 'on';
-if ~opt.Visible; visStr = 'off'; end
-figHandle = figure('Color', 'w', 'Position', fit_figure_to_screen(780, 1000), ...
-                   'Name', sprintf('PSD - %s', S.setname), 'Visible', visStr);
+if useTargetAxes
+    ax = opt.TargetAxes;
+    cla(ax);
+    figHandle = ax;   % nothing else to hand back in this mode
+else
+    visStr = 'on';
+    if ~opt.Visible; visStr = 'off'; end
+    figHandle = figure('Color', 'w', 'Position', fit_figure_to_screen(780, 1000), ...
+                       'Name', sprintf('PSD - %s', S.setname), 'Visible', visStr);
 
-ax = axes(figHandle, 'Position', [0.14 0.07 0.82 0.88]);
+    ax = axes(figHandle, 'Position', [0.14 0.07 0.82 0.88]);
+end
 
 if strcmpi(opt.Scale, 'db')
     yTickFormat = '%.0f';
@@ -134,8 +147,10 @@ if ~isempty(char(opt.Title))
 end
 
 % Method footnote. Small and grey: present for the record, but not part of
-% the visual design.
-if opt.ShowMethod
+% the visual design. Meaningless in TargetAxes mode -- there is no whole
+% figure belonging to this call to annotate (the caller's figure holds
+% other UI too).
+if opt.ShowMethod && ~useTargetAxes
     if strcmpi(opt.Scale, 'db')
         unitText = 'dB (10log_{10} \muV^2/Hz)';
     else
@@ -148,9 +163,13 @@ if opt.ShowMethod
 end
 
 % -------------------------------------------------------------------------
-% Save
+% Save -- also meaningless in TargetAxes mode, for the same reason
 % -------------------------------------------------------------------------
-if opt.Save
+if opt.Save && useTargetAxes
+    warning('plot_psd_stack:saveIgnoredWithTargetAxes', ...
+        '''Save'' is ignored when ''TargetAxes'' is supplied.');
+end
+if opt.Save && ~useTargetAxes
     if ~exist(cfg.figDir, 'dir'); mkdir(cfg.figDir); end
     tag = char(opt.Tag);
     if ~isempty(tag); tag = ['_' tag]; end
