@@ -69,7 +69,9 @@ classdef EEGDatasetManagerApp < matlab.apps.AppBase
 
         ResultsTab          matlab.ui.container.Tab
         ResultsGrid         matlab.ui.container.GridLayout
-        ResultsImage        matlab.ui.control.Image
+        ResultsPlotGrid     matlab.ui.container.GridLayout
+        ResultsAxes         matlab.ui.control.UIAxes  % 1x3: First / Second-to-last / Last
+        FrequencyReadoutLabel matlab.ui.control.Label
         NoResultsLabel      matlab.ui.control.Label
         ResultsButtonGrid   matlab.ui.container.GridLayout
         OpenCleanedFolderButton matlab.ui.control.Button
@@ -746,24 +748,29 @@ classdef EEGDatasetManagerApp < matlab.apps.AppBase
     methods (Access = private)
 
         function refreshResultsTab(app)
-            pngPath = fullfile(app.cfg.figDir, 'comparison_first_secondlast_last.png');
-            if exist(pngPath, 'file') == 2
-                % Read the pixels rather than pointing ImageSource at the path.
-                % The comparison figure is always saved under this same
-                % filename, so setting ImageSource to the same path string
-                % after a new run does not reliably force uiimage to reload
-                % the (changed) file on disk -- passing the decoded image
-                % data instead guarantees the tab actually shows the latest run.
+            % Live, interactive redraw (not the saved PNG) -- specs are
+            % reloaded from results/psd_<name>.mat rather than only kept in
+            % memory from the last run, so reselecting a dataset processed in
+            % an earlier session still shows an interactive comparison, not
+            % just whatever the last run in THIS session happened to be.
+            [specs, labels, ok] = app.loadComparisonSpecsForDataset(app.SelectedDatasetName);
+
+            if ok
                 try
-                    app.ResultsImage.ImageSource = imread(pngPath);
-                catch
-                    app.ResultsImage.ImageSource = pngPath;
+                    compare_recordings(specs, app.cfg, 'Titles', labels, ...
+                        'TargetAxes', app.ResultsAxes, 'Save', false);
+                    app.ResultsPlotGrid.Visible = 'on';
+                    app.NoResultsLabel.Visible = 'off';
+                catch ME
+                    ok = false;
+                    uialert(app.UIFigure, ME.message, 'Could not draw comparison', 'Icon', 'error');
                 end
-                app.ResultsImage.Visible = 'on';
-                app.NoResultsLabel.Visible = 'off';
-            else
-                app.ResultsImage.Visible = 'off';
+            end
+
+            if ~ok
+                app.ResultsPlotGrid.Visible = 'off';
                 app.NoResultsLabel.Visible = 'on';
+                app.FrequencyReadoutLabel.Text = 'Frequency: --';
             end
         end
 
@@ -807,6 +814,103 @@ classdef EEGDatasetManagerApp < matlab.apps.AppBase
                 copyfile(pngPath, fullfile(folder, file));
             catch ME
                 uialert(app.UIFigure, ME.message, 'Save failed', 'Icon', 'error');
+            end
+        end
+
+        function [specs, labels, ok] = loadComparisonSpecsForDataset(app, name)
+            %LOADCOMPARISONSPECSFORDATASET  Reload the first/second-to-last/
+            %   last spectra for NAME from results/psd_*.mat, the same
+            %   selection RUN_PIPELINE's own comparison figure uses. Reading
+            %   from disk (rather than only trusting whatever is left over in
+            %   memory from the last run) means this also works right after
+            %   reselecting a dataset that was processed in an earlier session.
+            specs = []; labels = {}; ok = false;
+            if isempty(name)
+                return
+            end
+
+            dsPath = fullfile(app.cfg.rawDir, name);
+            try
+                listing = find_recording_files(dsPath);
+            catch
+                return
+            end
+            if isempty(listing)
+                return
+            end
+            infos = arrayfun(@(d) parse_recording_name(fullfile(d.folder, d.name)), listing);
+
+            hasSpec = false(size(infos));
+            for i = 1:numel(infos)
+                hasSpec(i) = exist(app.psdMatPathFor(infos(i).name), 'file') == 2;
+            end
+            infos = infos(hasSpec);
+            if isempty(infos)
+                return
+            end
+
+            try
+                [sel, labelsOut] = pick_three(infos);
+            catch
+                return
+            end
+
+            specsOut = [];
+            for k = 1:numel(sel)
+                loaded = load(app.psdMatPathFor(infos(sel(k)).name), 'S');
+                if isempty(specsOut)
+                    specsOut = loaded.S;
+                else
+                    specsOut(end+1) = loaded.S; %#ok<AGROW>
+                end
+            end
+
+            specs = specsOut;
+            labels = labelsOut;
+            ok = true;
+        end
+
+        function matPath = psdMatPathFor(app, recordingName)
+            %PSDMATPATHFOR  Where RUN_PIPELINE saves a recording's spectrum
+            %   -- must match its own naming exactly (results/psd_<safe
+            %   name>.mat) or specs would never be found on reselect.
+            matPath = fullfile(app.cfg.resultDir, ['psd_' matlab.lang.makeValidName(recordingName) '.mat']);
+        end
+
+        function ResultsMouseMoved(app, ~)
+            %RESULTSMOUSEMOVED  Show the exact Hz under the cursor.
+            %
+            %   Wired to the whole figure's WindowButtonMotionFcn (uiaxes has
+            %   no per-axes hover event of its own in App Designer). For each
+            %   of the three comparison axes, MATLAB continuously updates
+            %   CurrentPoint to where the pointer would land in THAT axes'
+            %   data coordinates, even when the pointer isn't actually over
+            %   it -- so "is the pointer really over this axes" is decided by
+            %   checking the projected point against the axes' own current
+            %   XLim/YLim, not by pixel geometry.
+            if isempty(app.SelectedDatasetName) || strcmp(app.ResultsPlotGrid.Visible, 'off')
+                return
+            end
+
+            hz = NaN;
+            for i = 1:numel(app.ResultsAxes)
+                ax = app.ResultsAxes(i);
+                if ~isvalid(ax)
+                    continue
+                end
+                cp = ax.CurrentPoint;
+                x  = cp(1,1); y = cp(1,2);
+                xl = ax.XLim; yl = ax.YLim;
+                if x >= xl(1) && x <= xl(2) && y >= yl(1) && y <= yl(2)
+                    hz = x;
+                    break
+                end
+            end
+
+            if isnan(hz)
+                app.FrequencyReadoutLabel.Text = 'Frequency: --';
+            else
+                app.FrequencyReadoutLabel.Text = sprintf('Frequency: %.2f Hz', max(0, min(20, hz)));
             end
         end
 
@@ -1028,18 +1132,39 @@ classdef EEGDatasetManagerApp < matlab.apps.AppBase
             % --- Results tab ------------------------------------------------
             app.ResultsTab = uitab(app.RightTabGroup, 'Title', 'Results');
 
-            app.ResultsGrid = uigridlayout(app.ResultsTab, [2 1]);
-            app.ResultsGrid.RowHeight = {'1x', 40};
+            app.ResultsGrid = uigridlayout(app.ResultsTab, [3 1]);
+            app.ResultsGrid.RowHeight = {22, '1x', 40};
             app.ResultsGrid.ColumnWidth = {'1x'};
 
-            app.ResultsImage = uiimage(app.ResultsGrid);
-            app.ResultsImage.Layout.Row = 1;
-            app.ResultsImage.Layout.Column = 1;
-            app.ResultsImage.ScaleMethod = 'fit';
-            app.ResultsImage.Visible = 'off';
+            app.FrequencyReadoutLabel = uilabel(app.ResultsGrid);
+            app.FrequencyReadoutLabel.Layout.Row = 1;
+            app.FrequencyReadoutLabel.Layout.Column = 1;
+            app.FrequencyReadoutLabel.Text = 'Frequency: --';
+            app.FrequencyReadoutLabel.FontWeight = 'bold';
+            app.FrequencyReadoutLabel.HorizontalAlignment = 'center';
+
+            % Live, interactive comparison -- real uiaxes (not a flattened
+            % image) so the cursor readout above can report an exact Hz value
+            % straight from each axes' own data coordinates. See
+            % REFRESHRESULTSTAB and RESULTSMOUSEMOVED.
+            app.ResultsPlotGrid = uigridlayout(app.ResultsGrid, [1 3]);
+            app.ResultsPlotGrid.Layout.Row = 2;
+            app.ResultsPlotGrid.Layout.Column = 1;
+            app.ResultsPlotGrid.ColumnWidth = {'1x', '1x', '1x'};
+            app.ResultsPlotGrid.Padding = [0 0 0 0];
+            app.ResultsPlotGrid.Visible = 'off';
+
+            app.ResultsAxes = [uiaxes(app.ResultsPlotGrid), uiaxes(app.ResultsPlotGrid), ...
+                                uiaxes(app.ResultsPlotGrid)];
+            for i = 1:3
+                app.ResultsAxes(i).Layout.Row = 1;
+                app.ResultsAxes(i).Layout.Column = i;
+                app.ResultsAxes(i).Toolbar.Visible = 'off';
+                disableDefaultInteractivity(app.ResultsAxes(i));
+            end
 
             app.NoResultsLabel = uilabel(app.ResultsGrid);
-            app.NoResultsLabel.Layout.Row = 1;
+            app.NoResultsLabel.Layout.Row = 2;
             app.NoResultsLabel.Layout.Column = 1;
             app.NoResultsLabel.Text = sprintf(['No comparison figure yet.\n' ...
                 'Select a dataset and run the pipeline from the "Run Pipeline" tab.']);
@@ -1047,8 +1172,10 @@ classdef EEGDatasetManagerApp < matlab.apps.AppBase
             app.NoResultsLabel.VerticalAlignment = 'center';
             app.NoResultsLabel.FontColor = [0.5 0.5 0.5];
 
+            app.UIFigure.WindowButtonMotionFcn = @(src, event) app.ResultsMouseMoved(event);
+
             app.ResultsButtonGrid = uigridlayout(app.ResultsGrid, [1 4]);
-            app.ResultsButtonGrid.Layout.Row = 2;
+            app.ResultsButtonGrid.Layout.Row = 3;
             app.ResultsButtonGrid.Layout.Column = 1;
             app.ResultsButtonGrid.ColumnWidth = {'1x', '1x', '1x', '1x'};
             app.ResultsButtonGrid.Padding = [0 0 0 0];

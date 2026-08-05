@@ -20,6 +20,16 @@ function figHandle = compare_recordings(specs, cfg, varargin)
 %                    displays the saved PNG in its own Results tab -- a
 %                    second on-screen copy popping up separately would be
 %                    redundant with that, not additive.
+%       'TargetAxes' draw into these axes/uiaxes instead of creating a new
+%                    figure -- one handle per recording, same order as
+%                    specs. Used by the dataset manager app to render a
+%                    live, interactive comparison directly inside its own
+%                    Results tab (real axes give an exact cursor-to-Hz
+%                    reading for free; a saved PNG cannot). 'Save' and
+%                    'ShowMethod' are ignored in this mode -- there is no
+%                    single whole figure to save or annotate, and the
+%                    caller already has its own saved PNG from a separate,
+%                    ordinary call. Default: [] (creates its own figure).
 %
 %   WHY A SHARED VERTICAL SCALE MATTERS
 %   If each column were scaled to its own maximum, a recording with half the
@@ -42,10 +52,17 @@ p.addParameter('Tag',        'comparison', @(x) ischar(x) || isstring(x));
 p.addParameter('Scale',      'db',         @(x) any(strcmpi(x, {'db','linear'})));
 p.addParameter('ShowMethod', true,         @islogical);
 p.addParameter('Visible',    true,         @islogical);
+p.addParameter('TargetAxes', [],           @(x) isempty(x) || (isvector(x) && all(isgraphics(x))));
 p.parse(specs, cfg, varargin{:});
 opt = p.Results;
 
 nRec = numel(specs);
+useTargetAxes = ~isempty(opt.TargetAxes);
+if useTargetAxes && numel(opt.TargetAxes) ~= nRec
+    error('compare_recordings:axesCountMismatch', ...
+        'TargetAxes has %d handle(s) but %d recording(s) were given.', ...
+        numel(opt.TargetAxes), nRec);
+end
 
 % -------------------------------------------------------------------------
 % Refuse to compare things that are not comparable
@@ -93,21 +110,30 @@ end
 % -------------------------------------------------------------------------
 % Draw one column per recording
 % -------------------------------------------------------------------------
-visStr = 'on';
-if ~opt.Visible; visStr = 'off'; end
-figHandle = figure('Color', 'w', ...
-                   'Position', fit_figure_to_screen(min(1750, 560*nRec), 1000), ...
-                   'Name', 'PSD comparison', 'Visible', visStr);
+if useTargetAxes
+    figHandle = opt.TargetAxes;   % nothing else to hand back in this mode
+else
+    visStr = 'on';
+    if ~opt.Visible; visStr = 'off'; end
+    figHandle = figure('Color', 'w', ...
+                       'Position', fit_figure_to_screen(min(1750, 560*nRec), 1000), ...
+                       'Name', 'PSD comparison', 'Visible', visStr);
 
-leftMargin  = 0.075;
-rightMargin = 0.015;
-gap         = 0.025;
-colWidth    = (1 - leftMargin - rightMargin - gap*(nRec-1)) / nRec;
+    leftMargin  = 0.075;
+    rightMargin = 0.015;
+    gap         = 0.025;
+    colWidth    = (1 - leftMargin - rightMargin - gap*(nRec-1)) / nRec;
+end
 
 for r = 1:nRec
     S  = specs(r);
-    ax = axes(figHandle, 'Position', ...
-        [leftMargin + (r-1)*(colWidth+gap), 0.075, colWidth, 0.855]); %#ok<LAXES>
+    if useTargetAxes
+        ax = opt.TargetAxes(r);
+        cla(ax);
+    else
+        ax = axes(figHandle, 'Position', ...
+            [leftMargin + (r-1)*(colWidth+gap), 0.075, colWidth, 0.855]); %#ok<LAXES>
+    end
 
     style = struct('yFloor', yFloor, 'yRange', yRange, 'spacing', spacing, ...
                    'cmap', cmap, 'showLabels', r == 1, 'labelSize', 11, ...
@@ -147,7 +173,7 @@ for r = 1:nRec
          'FontWeight', 'bold', 'FontSize', 10, 'Interpreter', 'tex');
 end
 
-if opt.ShowMethod
+if opt.ShowMethod && ~useTargetAxes
     if strcmpi(opt.Scale, 'db')
         unitText = 'dB (10log_{10} \muV^2/Hz)';
     else
@@ -161,9 +187,14 @@ if opt.ShowMethod
 end
 
 % -------------------------------------------------------------------------
-% Save
+% Save -- meaningless in TargetAxes mode, there is no single whole figure
+% that belongs to this call (the caller's own figure holds other UI too)
 % -------------------------------------------------------------------------
-if opt.Save
+if opt.Save && useTargetAxes
+    warning('compare_recordings:saveIgnoredWithTargetAxes', ...
+        '''Save'' is ignored when ''TargetAxes'' is supplied.');
+end
+if opt.Save && ~useTargetAxes
     if ~exist(cfg.figDir, 'dir'); mkdir(cfg.figDir); end
     base = fullfile(cfg.figDir, char(opt.Tag));
     exportgraphics(figHandle, [base '.png'], 'Resolution', 150);
