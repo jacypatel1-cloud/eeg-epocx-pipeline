@@ -8,13 +8,19 @@ A map of this folder. Nothing here is technical.
 
 **Double-click `1 - START HERE.bat`**
 
-MATLAB opens, loads the project, checks everything is installed, and prints a
-menu. That is the whole start-up procedure.
+MATLAB opens, gets everything ready, and opens the **EEG Dataset Manager**
+window — add dataset zips, browse/rename/delete datasets and the files inside
+them, run the pipeline on a selected dataset, and see the results, all without
+typing a command. That is the whole start-up procedure.
 
 Then, if you want Claude Code as well, double-click **`2 - Claude Code.bat`**.
 
 **Always in that order.** Claude Code checks its MATLAB connection once when it
 starts, so MATLAB has to be running first.
+
+**Troubleshooting, or want the console instead?** Run `START_HERE.m` directly
+inside MATLAB. It does the same setup and prints a full menu of console
+commands and an environment report, instead of opening the window.
 
 ---
 
@@ -45,7 +51,8 @@ EEG/
 ├── Tools/                 ← MATLAB MCP server (lets Claude talk to MATLAB)
 ├── toolboxes/             ← EEGLAB (do not touch)
 │
-├── START_HERE.m           ← what launcher 1 runs
+├── Launch_App.m           ← what launcher 1 actually runs (opens the app)
+├── START_HERE.m           ← the console workflow, for troubleshooting
 └── CLAUDE.md              ← rules for AI assistants working on this code
 ```
 
@@ -102,20 +109,21 @@ ever want to.
 | 2 | `check_env.m` | Confirms everything is installed |
 | 3 | `pipeline_config.m` | **Every setting and threshold lives here** |
 | 4 | `select_dataset.m` | Picks which dataset subfolder to process — latest one by default |
-| 5 | `parse_recording_name.m` | Works out who, what and when from the filename |
-| 6 | `import_recording.m` | Loads the file, sending EDF/BDF, CSV and DAT to the right reader |
-| 7 | `import_emotiv_csv.m` | Reads Emotiv CSV exports |
-| 8 | `import_matrix_dat.m` | Reads headerless numeric-matrix files (needs sample rate + channel order given explicitly) |
-| 9 | `preprocess_recording.m` | The 8 cleaning stages |
-| 10 | `compute_psd.m` | Works out the power spectrum |
-| 11 | `draw_psd_strips.m` | Draws the coloured bands |
-| 12 | `plot_psd_stack.m` | One recording, one page |
-| 13 | `fit_figure_to_screen.m` | Keeps the plot window's title bar on-screen, whatever monitor it opens on |
-| 14 | `pick_three.m` | Chooses first / second-to-last / last |
-| 15 | `compare_recordings.m` | Three recordings side by side |
-| 16 | `run_pipeline.m` | **Runs all of the above over every file** |
+| 5 | `find_recording_files.m` | Finds the real recording files in a dataset folder, filtering out junk |
+| 6 | `parse_recording_name.m` | Works out who, what and when from the filename |
+| 7 | `import_recording.m` | Loads the file, sending EDF/BDF, CSV and DAT to the right reader |
+| 8 | `import_emotiv_csv.m` | Reads Emotiv CSV exports |
+| 9 | `import_matrix_dat.m` | Reads headerless numeric-matrix files (needs sample rate + channel order given explicitly) |
+| 10 | `preprocess_recording.m` | The 8 cleaning stages |
+| 11 | `compute_psd.m` | Works out the power spectrum |
+| 12 | `draw_psd_strips.m` | Draws the coloured bands |
+| 13 | `plot_psd_stack.m` | One recording, one page |
+| 14 | `fit_figure_to_screen.m` | Keeps the plot window's title bar on-screen, whatever monitor it opens on |
+| 15 | `pick_three.m` | Chooses first / second-to-last / last |
+| 16 | `compare_recordings.m` | Three recordings side by side |
+| 17 | `run_pipeline.m` | **Runs all of the above over every file** |
 
-Five extras, not part of the main run:
+Six extras, not part of the main run:
 
 | File | What it does |
 |---|---|
@@ -125,6 +133,15 @@ Five extras, not part of the main run:
 | `test_edf_roundtrip.m` | Checks the EDF reader puts the right signal under the right channel name |
 | `get_sample_data.m` | Where to download public sample recordings |
 | `sync_to_github.m` | Saves your changes to GitHub in one line |
+
+The interactive window (what `Launch_App.m` opens):
+
+| File | What it does |
+|---|---|
+| `EEGDatasetManagerApp.m` | The Dataset Manager window itself — add/rename/delete datasets and their files, run the pipeline, view results |
+| `list_datasets.m` | Lists every `data/raw/` dataset with its recording count, size and modified date, for the app's dataset table |
+| `rename_dataset.m` | Renames a dataset folder |
+| `delete_dataset.m` | Deletes a dataset folder |
 
 ---
 

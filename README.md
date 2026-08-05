@@ -31,13 +31,37 @@ You also need EEGLAB, which is not bundled. See **`docs/SETUP.md`**, then run
 
 **Double-click `1 - START HERE.bat`.**
 
-MATLAB opens already pointed at this folder, starts EEGLAB, checks the
-installation, shares the session so Claude can connect, and prints a menu.
+MATLAB opens already pointed at this folder, gets EEGLAB ready, and opens the
+**EEG Dataset Manager** — an interactive window where you can:
 
-Already have MATLAB open? Open `START_HERE.m` and press the green **Run** button
-instead — it does the same thing.
+- **Add Dataset(s)...** — pick one or more `.zip` files; each is extracted into
+  its own `data/raw/<name>/` folder automatically.
+- Browse the dataset list, rename or delete a dataset, and inspect/add/rename/
+  delete individual files inside one, from the **Files** tab.
+- Click a dataset, then **Run Pipeline on Selected Dataset** (in the **Run
+  Pipeline** tab) — imports, cleans, computes spectra, and builds the
+  comparison figure, with the full log shown in the window.
+- The **Results** tab shows the first/second-to-last/last PSD comparison as
+  soon as a run finishes, plus buttons to open the cleaned-data, figures and
+  QC-summary folders directly in Explorer.
 
-Then process everything:
+Everything the window does calls the same functions described below
+(`run_pipeline`, `import_dataset_zip`, etc.) — nothing about the pipeline
+itself changes, this just gives it a front end.
+
+**Troubleshooting, or prefer the console?** Open `START_HERE.m` in MATLAB and
+press the green **Run** button — it does the same setup, then prints a menu of
+console commands (including everything below) instead of opening the window.
+
+New to the folder? Read `WHERE_EVERYTHING_IS.md` first — it is a one-page map
+with no technical detail in it.
+
+---
+
+## Console workflow
+
+Everything above is also available as plain MATLAB commands, after running
+`START_HERE.m` (or `cfg = setup_paths();` by hand):
 
 ```matlab
 results = run_pipeline();
@@ -50,9 +74,6 @@ version, computes the spectra, and writes a comparison figure.
 `data/raw/Harvard/`, `data/raw/Zenodo/`) — see [Working with multiple
 datasets](#working-with-multiple-datasets) below. `run_pipeline()` with no
 arguments always processes whichever subfolder was extracted most recently.
-
-New to the folder? Read `WHERE_EVERYTHING_IS.md` first — it is a one-page map
-with no technical detail in it.
 
 ---
 
