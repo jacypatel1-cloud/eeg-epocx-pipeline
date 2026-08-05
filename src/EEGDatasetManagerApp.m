@@ -463,14 +463,61 @@ classdef EEGDatasetManagerApp < matlab.apps.AppBase
                 importOptionsLocal = importOptions; %#ok<NASGU> % read by evalc below
                 captured = evalc(cmd);
 
-                nOk   = sum([resultsLocal.ok]); %#ok<NODEF>
-                nFail = numel(resultsLocal) - nOk;
-                app.RunStatusLabel.Text = sprintf('Done: %d succeeded, %d failed.', nOk, nFail);
+                nTotal = numel(resultsLocal); %#ok<NODEF>
+                okMask = [resultsLocal.ok];
+                nOk    = sum(okMask);
+                nFail  = nTotal - nOk;
+
+                % "Unusable" is QC's usable==false on a recording that DID
+                % import and process -- distinct from nFail (didn't even get
+                % that far). Both mean "can't use this recording's result",
+                % so both count toward the percentage shown to the user.
+                nUnusableOk = 0;
+                okIdx = find(okMask);
+                for k = okIdx
+                    if ~isempty(resultsLocal(k).qc) && isfield(resultsLocal(k).qc, 'usable') ...
+                            && ~resultsLocal(k).qc.usable
+                        nUnusableOk = nUnusableOk + 1;
+                    end
+                end
+                nBad    = nFail + nUnusableOk;
+                pctBad  = 100 * nBad / max(nTotal, 1);
+
                 app.LogTextArea.Value = strsplit(captured, newline);
-                app.refreshResultsTab();
+
+                proceed = true;
+                if nBad > 0
+                    detailLines = {};
+                    if nFail > 0
+                        detailLines{end+1} = sprintf('%d failed to process entirely.', nFail); %#ok<AGROW>
+                    end
+                    if nUnusableOk > 0
+                        detailLines{end+1} = sprintf(['%d processed but were flagged unusable by ' ...
+                            'quality control (too noisy, too few clean epochs, or too many bad ' ...
+                            'channels -- see results/qc_summary.csv for exactly why each one).'], ...
+                            nUnusableOk); %#ok<AGROW>
+                    end
+                    choice = uiconfirm(app.UIFigure, ...
+                        sprintf(['%.0f%% of this dataset (%d of %d recordings) is unusable:\n\n%s\n\n' ...
+                                 'View the results anyway?'], ...
+                                pctBad, nBad, nTotal, strjoin(detailLines, '\n')), ...
+                        'Some Data Is Unusable', ...
+                        'Options', {'Yes', 'No'}, 'DefaultOption', 1, 'CancelOption', 2, ...
+                        'Icon', 'warning');
+                    proceed = strcmp(choice, 'Yes');
+                end
+
+                if proceed
+                    app.RunStatusLabel.Text = sprintf('Done: %d succeeded, %d failed.', nOk, nFail);
+                    app.refreshResultsTab();
+                else
+                    app.RunStatusLabel.Text = sprintf(['Done: %d succeeded, %d failed -- results not ' ...
+                        'shown (declined).'], nOk, nFail);
+                end
             catch ME
                 app.RunStatusLabel.Text = 'Pipeline failed -- see log.';
                 app.LogTextArea.Value = strsplit(sprintf('ERROR: %s', ME.message), newline);
+                uialert(app.UIFigure, ME.message, 'Pipeline Error', 'Icon', 'error');
             end
         end
 
