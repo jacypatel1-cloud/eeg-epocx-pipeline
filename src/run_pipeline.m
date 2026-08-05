@@ -66,29 +66,13 @@ datasetDir = select_dataset(cfg, 'Dataset', opt.Dataset);
 % EDF and BDF are the brief's primary formats; EmotivPRO CSV is what the
 % public sample datasets ship as; DAT is a headerless matrix format some
 % third-party datasets use (see IMPORT_MATRIX_DAT). All are accepted, and
-% IMPORT_RECORDING routes each to the right reader. The search is recursive
-% within the chosen dataset folder -- some datasets ship flat (Harvard),
-% others nest one subfolder per subject (Zenodo) -- '**' covers both.
-listing = [dir(fullfile(datasetDir, '**', '*.edf'));
-           dir(fullfile(datasetDir, '**', '*.bdf'));
-           dir(fullfile(datasetDir, '**', '*.csv'));
-           dir(fullfile(datasetDir, '**', '*.dat'))];
-listing = listing(~[listing.isdir]);
-
-% The Harvard dataset also ships "_intervalMarker.csv" files (event markers,
-% no EEG) and ".json" session metadata. Neither is a recording, and treating
-% one as such would fail confusingly deep inside the importer.
-isMarker = contains({listing.name}, '_intervalMarker', 'IgnoreCase', true);
-listing  = listing(~isMarker);
-
-% A zip extracted from macOS carries a "__MACOSX" folder of AppleDouble
-% resource-fork shadow files (named "._<original>", same extension as the
-% real file). These are not recordings and importing one would fail deep
-% inside the reader with a confusing error, so they are filtered here where
-% the reason is obvious instead.
-isAppleJunk = contains({listing.folder}, '__MACOSX', 'IgnoreCase', true) | ...
-              startsWith({listing.name}, '._');
-listing = listing(~isAppleJunk);
+% IMPORT_RECORDING routes each to the right reader. FIND_RECORDING_FILES
+% also filters out non-recording files these sample datasets ship alongside
+% (event markers, AppleDouble junk from a macOS-made zip) -- see that
+% function for why. The dataset manager UI's recording counts use the same
+% function, so a dataset never shows a different count there than it
+% actually processes here.
+listing = find_recording_files(datasetDir);
 
 if isempty(listing)
     error('run_pipeline:noData', ...
