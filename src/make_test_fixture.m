@@ -13,12 +13,23 @@ function outFile = make_test_fixture(cfg, varargin)
 %   real files without the SYNTHETIC prefix it is given here.
 %
 %   Options:
-%       'AlphaFreq'   peak frequency to inject, Hz.     Default 10
-%       'AlphaAmp'    amplitude of that peak, uV.       Default 15
-%       'DurationSec' recording length.                 Default 120
-%       'SampleRate'  128 or 256.                       Default 128
-%       'LineFreq'    mains frequency to inject, Hz.    Default 60
-%       'BadChannel'  index forced flat, 0 for none.    Default 5 (T7)
+%       'AlphaFreq'       peak frequency to inject, Hz.     Default 10
+%       'AlphaAmp'        amplitude of that peak, uV.       Default 15
+%       'DurationSec'     recording length.                 Default 120
+%       'SampleRate'      128 or 256.                       Default 128
+%       'LineFreq'        mains frequency to inject, Hz.    Default 60
+%       'LineAmp'         amplitude of the mains hum, uV.   Default 3
+%       'BadChannel'      index/indices forced flat, 0 for none. Default 5 (T7)
+%       'ExtremeNoiseAmp' amplitude of large sparse noise bursts injected on
+%                         EVERY channel (severe movement/electrode artifact,
+%                         not the ordinary blink transients below). 0 = off.
+%                         Default 0
+%       'InjectNaNFrac'   fraction of all samples replaced with NaN before
+%                         writing, to exercise the importer's non-finite
+%                         handling. 0 = off.                Default 0
+%       'Tag'             filename suffix, so multiple adversarial fixtures
+%                         with the same AlphaFreq/SampleRate don't collide.
+%                         Default ''
 %
 %   The file includes, deliberately:
 %     - 1/f background, so the spectrum looks broadly physiological
@@ -26,20 +37,27 @@ function outFile = make_test_fixture(cfg, varargin)
 %     - blink transients on frontal channels (AF3 AF4 F7 F8)
 %     - mains hum, to give the notch stage something to remove
 %     - slow drift, to give the high-pass something to remove
-%     - one flat channel, to give QC something to flag
+%     - one or more flat channels, to give QC something to flag
+%     - optionally: severe broadband artifact bursts and/or corrupted
+%       (NaN) samples, for stress-testing beyond a normal recording
 %
 %   See also IMPORT_EMOTIV_CSV, QC_REPORT, PLOT_PSD.
 
 p = inputParser;
 p.addRequired('cfg', @isstruct);
-p.addParameter('AlphaFreq',   10,  @isscalar);
-p.addParameter('AlphaAmp',    15,  @isscalar);
-p.addParameter('DurationSec', 120, @isscalar);
-p.addParameter('SampleRate',  128, @(x) any(x == [128 256]));
-p.addParameter('LineFreq',    60,  @isscalar);
+p.addParameter('AlphaFreq',       10,  @isscalar);
+p.addParameter('AlphaAmp',        15,  @isscalar);
+p.addParameter('DurationSec',     120, @isscalar);
+p.addParameter('SampleRate',      128, @(x) any(x == [128 256]));
+p.addParameter('LineFreq',        60,  @isscalar);
+p.addParameter('LineAmp',         3,   @isscalar);
 % T7 by default: deliberately NOT one of the posterior alpha channels, so a
 % flat channel and a missing alpha peak stay independent failure signals.
-p.addParameter('BadChannel',  5,   @isscalar);
+% Accepts a vector to force several channels flat at once.
+p.addParameter('BadChannel',      5,   @(x) isnumeric(x) && isvector(x));
+p.addParameter('ExtremeNoiseAmp', 0,   @isscalar);
+p.addParameter('InjectNaNFrac',   0,   @(x) isscalar(x) && x >= 0 && x < 1);
+p.addParameter('Tag',             '',  @(x) ischar(x) || isstring(x));
 p.parse(cfg, varargin{:});
 opt = p.Results;
 
@@ -64,7 +82,7 @@ for c = 1:nCh
     x = x + 20 * sin(2*pi*0.05*t + rand*2*pi) + 15 * sin(2*pi*0.11*t + rand*2*pi);
 
     % Mains hum -- target of the notch stage
-    x = x + 3 * sin(2*pi*opt.LineFreq*t + rand*2*pi);
+    x = x + opt.LineAmp * sin(2*pi*opt.LineFreq*t + rand*2*pi);
 
     % Alpha, posterior only. Narrowband rather than a pure tone so the peak
     % has realistic width.
@@ -79,20 +97,39 @@ for c = 1:nCh
         x = x + blink_train(n, srate, 0.3, 80);
     end
 
+    % Severe broadband artifact bursts, EVERY channel -- unlike the blink
+    % transients above (physiological, frontal-only, ICA-separable), this
+    % simulates something crude like a loose electrode or gross movement:
+    % sparse, large, and present everywhere at once.
+    if opt.ExtremeNoiseAmp > 0
+        x = x + motion_burst(n, srate, opt.ExtremeNoiseAmp);
+    end
+
     data(:, c) = x;
 end
 
-% One dead channel for QC to catch
-if opt.BadChannel >= 1 && opt.BadChannel <= nCh
-    data(:, opt.BadChannel) = 0.01 * randn(n, 1);
+% One or more dead channels for QC to catch
+badChans = opt.BadChannel(opt.BadChannel >= 1 & opt.BadChannel <= nCh);
+for bc = badChans(:)'
+    data(:, bc) = 0.01 * randn(n, 1);
+end
+
+% Corrupt samples, to exercise the importer's non-finite handling. Applied
+% last, after every other component, so it corrupts the final signal rather
+% than being smoothed away by anything computed from it.
+if opt.InjectNaNFrac > 0
+    corruptMask = rand(n, nCh) < opt.InjectNaNFrac;
+    data(corruptMask) = NaN;
 end
 
 % -------------------------------------------------------------------------
 % Write in EmotivPRO layout: metadata line, then column header, then data
 % -------------------------------------------------------------------------
 if ~exist(cfg.rawDir, 'dir'); mkdir(cfg.rawDir); end
-outFile = fullfile(cfg.rawDir, sprintf('SYNTHETIC_EPOCX_%dHz_alpha%d.csv', ...
-                                       srate, round(opt.AlphaFreq)));
+tag = char(opt.Tag);
+if ~isempty(tag); tag = ['_' tag]; end
+outFile = fullfile(cfg.rawDir, sprintf('SYNTHETIC_EPOCX_%dHz_alpha%d%s.csv', ...
+                                       srate, round(opt.AlphaFreq), tag));
 
 fid = fopen(outFile, 'w');
 if fid < 0
@@ -118,11 +155,23 @@ end
 
 clear cleanup;
 
+if isempty(badChans)
+    badChanStr = 'none';
+else
+    badChanStr = strjoin(chans(badChans), ' ');
+end
+
 fprintf('Wrote fixture: %s\n', outFile);
 fprintf('  %d ch x %d samples (%.0f s) at %d Hz\n', nCh, n, opt.DurationSec, srate);
-fprintf('  Ground truth: %.1f Hz alpha (%.0f uV) on %s; flat channel %s; %d Hz line\n', ...
+fprintf('  Ground truth: %.1f Hz alpha (%.0f uV) on %s; flat channel(s): %s; %d Hz line\n', ...
         opt.AlphaFreq, opt.AlphaAmp, strjoin(chans(posterior), ' '), ...
-        chans{opt.BadChannel}, opt.LineFreq);
+        badChanStr, opt.LineFreq);
+if opt.ExtremeNoiseAmp > 0
+    fprintf('  Extreme noise bursts injected: amplitude %g uV, all channels\n', opt.ExtremeNoiseAmp);
+end
+if opt.InjectNaNFrac > 0
+    fprintf('  Corrupted samples injected: %.1f%% of all values set to NaN\n', opt.InjectNaNFrac*100);
+end
 end
 
 
@@ -158,5 +207,24 @@ shape = amp * exp(-((1:w)' - w/2).^2 / (2 * (w/6)^2));
 for k = 1:nBlinks
     i0 = randi([1, max(1, n - w)]);
     y(i0:i0+w-1) = y(i0:i0+w-1) + shape * (0.7 + 0.6*rand);
+end
+end
+
+% =========================================================================
+function y = motion_burst(n, srate, amp)
+%MOTION_BURST  Sparse, large, sign-random amplitude bursts on one channel.
+%   Meant to simulate a gross artifact (movement, electrode pop) rather than
+%   a physiological one: wider and less regularly shaped than BLINK_TRAIN,
+%   and called on every channel independently rather than only frontal
+%   ones, so it stresses bad-segment detection without also looking like a
+%   spatial pattern ICA could cleanly separate.
+y = zeros(n, 1);
+w = round(0.6 * srate);
+nBursts = max(1, round(n / srate / 4));   % roughly one burst every ~4 s
+for k = 1:nBursts
+    i0 = randi([1, max(1, n - w)]);
+    shape = amp * (0.6 + 0.8*rand) * exp(-((1:w)' - w/2).^2 / (2 * (w/5)^2));
+    sgn = sign(randn);
+    y(i0:i0+w-1) = y(i0:i0+w-1) + sgn * shape;
 end
 end
