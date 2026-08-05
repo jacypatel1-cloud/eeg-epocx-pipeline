@@ -49,11 +49,22 @@ function P = pipeline_config(varargin)
 %
 % Set badSegAbsUV to a number to force the old fixed-threshold behaviour
 % (e.g. a validated clinical protocol that mandates one specific cutoff).
+%
+% FLOOR/CEILING RE-MEASURED ACROSS TWO INDEPENDENT DATASETS. The first
+% version of this guardrail (100-600 uV) was set from the Harvard set alone
+% and immediately proved too narrow: run against the Zenodo 14-channel EPOC
+% set (64 recordings, saline-prepped electrodes, visibly lower noise floor),
+% the RAW unclamped statistic ranged 45.9-861.7 uV, median 109.6, 5th/95th
+% pct 57.6/304.9 -- both comfortably outside the old bounds. Floor lowered
+% to sit just under the combined 5th percentile; ceiling raised to sit just
+% over the combined max, so a genuinely clean recording isn't held to the
+% Harvard set's noise floor and a genuinely noisy one isn't capped below
+% its true artifact level.
 P.doBadSegments   = true;
 P.badSegAbsUV     = [];    % [] = adaptive (recommended); or a fixed uV value
 P.badSegAdaptK    = 8;     % robust-sigma multiplier for the adaptive threshold
-P.badSegFloorUV   = 100;   % never trigger below this, even on very clean data
-P.badSegCeilUV    = 600;   % never require above this, even on very noisy data
+P.badSegFloorUV   = 50;    % never trigger below this, even on very clean data
+P.badSegCeilUV    = 900;   % never require above this, even on very noisy data
 P.badSegPadSec    = 0.1;   % also drop this much either side of a bad patch,
                            % because filter ringing spreads the damage
 
@@ -168,26 +179,33 @@ P.badChanFlatSec  = 5;     % flat for this many seconds = dead
 % correlation falls more than badChanCorrK robust-sigmas below the MEDIAN
 % correlation of that same recording -- i.e. "unusually disagreeable
 % compared to its own session's peers," not "below some number picked from
-% a different dataset." The floor/ceiling below exist so a session where
-% every channel happens to correlate very tightly (floor) or very loosely
-% (ceiling) doesn't turn the adaptive threshold into something absurd.
+% a different dataset." The floor stops the required bar from dropping too
+% low on a session that is uniformly noisy (every channel loosely
+% correlated); the ceiling stops it climbing too high on a session that is
+% uniformly tight (every channel highly correlated) -- either way, without
+% them, a session's own noise level could turn the adaptive threshold into
+% something absurd.
 %
-% THE FLOOR AND CEILING ARE INFORMED BY A REAL MEASUREMENT, THOUGH. Across 6
-% recordings from the original client dataset (84 channel observations),
-% after 1-45 Hz filtering, correlation with the average of the rest was:
-%     min 0.07 | 5th pct 0.28 | median 0.70 | 95th pct 0.93 | max 0.95
-% Temporal electrodes T7/T8 sit lowest by nature (medians 0.49 and 0.51)
-% because they are physically farthest from the rest of the montage -- that
-% is why the floor stays well below the old fixed 0.25, so a naturally
-% peripheral channel is not punished for its position on a new client's
-% headset layout.
+% THE FLOOR AND CEILING ARE MEASURED, ACROSS TWO INDEPENDENT DATASETS, NOT
+% GUESSED. First pass used only 6 recordings from the original client
+% dataset and set the ceiling (0.45) far too low, as running it against the
+% Zenodo 14-channel EPOC set (64 recordings, saline-prepped electrodes --
+% genuinely higher, more uniform inter-channel correlation) proved: 63% of
+% those recordings pinned the adaptive threshold at the old ceiling, i.e.
+% "adaptive" had degraded into a fixed 0.45 for the majority of a dataset it
+% had never seen. The RAW unclamped statistic across both datasets combined
+% (Harvard + Zenodo):
+%     min 0.00 | 5th pct 0.06 | median 0.48 | 95th pct 0.80 | max 0.88
+% Floor lowered toward the combined 5th percentile; ceiling raised toward
+% the combined 95th percentile (not the max -- a ceiling that chases every
+% outlier stops being a meaningful cap at all).
 %
 % Set badChanCorr to a number (0-1) to force the old fixed-threshold
 % behaviour.
 P.badChanCorr      = [];    % [] = adaptive (recommended); or a fixed 0-1 value
 P.badChanCorrK     = 3;     % robust-sigma multiplier below the recording's own median
-P.badChanCorrFloor = 0.10;  % never flag above this correlation, regardless of stats
-P.badChanCorrCeil  = 0.45;  % never require above this correlation, regardless of stats
+P.badChanCorrFloor = 0.05;  % never flag above this correlation, regardless of stats
+P.badChanCorrCeil  = 0.75;  % never require above this correlation, regardless of stats
 P.badChanMaxFrac   = 0.25;  % refuse to interpolate more than this fraction
 
 % =========================================================================
@@ -211,9 +229,21 @@ P.epochOverlap    = 0.5;   % fraction
 % clamped to the floor/ceiling below.
 %
 % Set epochRejUV to a number to force the old fixed-threshold behaviour.
+%
+% THE FLOOR WAS THE WORST-CALIBRATED NUMBER IN THIS FILE. At 80 uV it sat
+% ABOVE THE 95TH PERCENTILE of the raw unclamped statistic measured across
+% both datasets combined (Harvard + Zenodo, 115 recordings): min 20.4 |
+% 5th pct 23.3 | median 35.1 | 95th pct 64.9 | max 107.9 uV. In practice
+% that meant every single recording in both datasets was pinned at the
+% floor -- this "adaptive" threshold had been silently behaving as a flat
+% 80 uV cutoff for every recording since the day it was introduced. Lowered
+% to sit at the combined minimum, so the floor is once again a genuine
+% edge-case guardrail rather than the everyday operating value. Ceiling was
+% never approached by either dataset (max 107.9 vs a 400 uV ceiling) and is
+% left as-is.
 P.epochRejUV       = [];   % [] = adaptive (recommended); or a fixed uV value
 P.epochRejK        = 8;    % robust-sigma multiplier for the adaptive threshold
-P.epochRejFloorUV  = 80;   % never trigger below this, even on very clean data
+P.epochRejFloorUV  = 20;   % never trigger below this, even on very clean data
 P.epochRejCeilUV   = 400;  % never require above this, even on very noisy data
 P.epochMinKeep    = 3;     % fewer surviving epochs than this = unusable
 
