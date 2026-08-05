@@ -81,6 +81,14 @@ classdef EEGDatasetManagerApp < matlab.apps.AppBase
         PrintGrid           matlab.ui.container.GridLayout
         PrintTable          matlab.ui.control.Table
         PrintSelectedButton matlab.ui.control.Button
+
+        TrashTab            matlab.ui.container.Tab
+        TrashGrid           matlab.ui.container.GridLayout
+        TrashTable          matlab.ui.control.Table
+        TrashButtonGrid     matlab.ui.container.GridLayout
+        RestoreButton       matlab.ui.control.Button
+        DeleteForeverButton matlab.ui.control.Button
+        EmptyTrashButton    matlab.ui.control.Button
     end
 
     % =====================================================================
@@ -92,6 +100,7 @@ classdef EEGDatasetManagerApp < matlab.apps.AppBase
         SelectedDatasetName = ''    % char, name of the selected dataset row
         FileRows            = []    % dir()-style struct array, current dataset's files
         PrintRows           = []    % parse_recording_name() struct array, current dataset's recordings
+        TrashRows           = []    % struct array from list_trash()
     end
 
     % =====================================================================
@@ -120,6 +129,7 @@ classdef EEGDatasetManagerApp < matlab.apps.AppBase
             end
             app.refreshDatasetTable();
             app.refreshResultsTab();
+            app.refreshTrashTable();
             app.RunStatusLabel.Text = 'Idle.';
         end
 
@@ -252,18 +262,20 @@ classdef EEGDatasetManagerApp < matlab.apps.AppBase
             end
             name = app.SelectedDatasetName;
             choice = uiconfirm(app.UIFigure, ...
-                sprintf(['Delete dataset "%s" and every file inside it?\n\n' ...
-                         'This cannot be undone. Anything already processed from it ' ...
-                         'in data/processed, figures/ or results/ is NOT affected.'], name), ...
-                'Delete Dataset', 'Options', {'Delete', 'Cancel'}, ...
+                sprintf(['Move dataset "%s" and every file inside it to the trash?\n\n' ...
+                         'It can be restored later from the Trash tab. Anything already ' ...
+                         'processed from it in data/processed, figures/ or results/ is ' ...
+                         'NOT affected.'], name), ...
+                'Delete Dataset', 'Options', {'Move to Trash', 'Cancel'}, ...
                 'DefaultOption', 2, 'CancelOption', 2, 'Icon', 'warning');
-            if ~strcmp(choice, 'Delete')
+            if ~strcmp(choice, 'Move to Trash')
                 return
             end
             try
                 delete_dataset(app.cfg, name);
                 app.SelectedDatasetName = '';
                 app.refreshDatasetTable();
+                app.refreshTrashTable();
             catch ME
                 uialert(app.UIFigure, ME.message, 'Delete failed', 'Icon', 'error');
             end
@@ -352,19 +364,20 @@ classdef EEGDatasetManagerApp < matlab.apps.AppBase
             end
             f = app.FileRows(row);
             fullPath = fullfile(f.folder, f.name);
-            choice = uiconfirm(app.UIFigure, sprintf('Delete "%s"?', f.name), ...
-                'Delete File', 'Options', {'Delete', 'Cancel'}, ...
+            choice = uiconfirm(app.UIFigure, sprintf('Move "%s" to trash?', f.name), ...
+                'Delete File', 'Options', {'Move to Trash', 'Cancel'}, ...
                 'DefaultOption', 2, 'CancelOption', 2, 'Icon', 'warning');
-            if ~strcmp(choice, 'Delete')
+            if ~strcmp(choice, 'Move to Trash')
                 return
             end
             try
-                delete(fullPath);
+                move_to_trash(app.cfg, fullPath);
             catch ME
                 uialert(app.UIFigure, ME.message, 'Delete failed', 'Icon', 'error');
             end
             app.refreshFileTable();
             app.refreshDatasetTable();
+            app.refreshTrashTable();
         end
 
         function RenameFileButtonPushed(app, ~)
@@ -486,6 +499,113 @@ classdef EEGDatasetManagerApp < matlab.apps.AppBase
             %   PLOT_PSD_STACK's own naming (safe-name + '_psdstack.png',
             %   no tag) exactly, or the Print tab would never find it.
             pngPath = fullfile(app.cfg.figDir, [matlab.lang.makeValidName(recordingName) '_psdstack.png']);
+        end
+
+    end
+
+    % =====================================================================
+    % Trash tab -- global (not scoped to the selected dataset)
+    % =====================================================================
+    methods (Access = private)
+
+        function refreshTrashTable(app)
+            rows = list_trash(app.cfg);
+            app.TrashRows = rows;
+
+            n = numel(rows);
+            data = cell(n, 4);
+            for i = 1:n
+                displayName = regexprep(rows(i).name, '__trashed_\d{8}_\d{6}$', '');
+                data{i,1} = displayName;
+                if rows(i).isDir
+                    data{i,2} = 'Dataset';
+                else
+                    data{i,2} = 'File';
+                end
+                data{i,3} = char(rows(i).trashedOn, 'dd-MMM-uuuu HH:mm');
+                data{i,4} = char(rows(i).originalPath);
+            end
+            app.TrashTable.Data = data;
+        end
+
+        function row = selectedTrashRow(app)
+            row = [];
+            sel = app.TrashTable.Selection;
+            if isempty(sel)
+                return
+            end
+            row = sel(1, 1);
+            if row < 1 || row > numel(app.TrashRows)
+                row = [];
+            end
+        end
+
+        function RestoreButtonPushed(app, ~)
+            row = app.selectedTrashRow();
+            if isempty(row)
+                uialert(app.UIFigure, 'Select a trashed item first.', 'Nothing selected');
+                return
+            end
+            entryName = app.TrashRows(row).name;
+            try
+                restore_from_trash(app.cfg, entryName);
+            catch ME
+                uialert(app.UIFigure, ME.message, 'Restore failed', 'Icon', 'error');
+            end
+            app.refreshTrashTable();
+            app.refreshDatasetTable();
+        end
+
+        function DeleteForeverButtonPushed(app, ~)
+            row = app.selectedTrashRow();
+            if isempty(row)
+                uialert(app.UIFigure, 'Select a trashed item first.', 'Nothing selected');
+                return
+            end
+            entryName = app.TrashRows(row).name;
+            choice = uiconfirm(app.UIFigure, ...
+                sprintf('Permanently delete "%s"?\n\nThis cannot be undone -- there is no trash for the trash.', ...
+                        regexprep(entryName, '__trashed_\d{8}_\d{6}$', '')), ...
+                'Delete Forever', 'Options', {'Delete Forever', 'Cancel'}, ...
+                'DefaultOption', 2, 'CancelOption', 2, 'Icon', 'warning');
+            if ~strcmp(choice, 'Delete Forever')
+                return
+            end
+            try
+                permanently_delete_trash_item(app.cfg, entryName);
+            catch ME
+                uialert(app.UIFigure, ME.message, 'Delete failed', 'Icon', 'error');
+            end
+            app.refreshTrashTable();
+        end
+
+        function EmptyTrashButtonPushed(app, ~)
+            if isempty(app.TrashRows)
+                uialert(app.UIFigure, 'Trash is already empty.', 'Nothing to empty');
+                return
+            end
+            n = numel(app.TrashRows);
+            choice = uiconfirm(app.UIFigure, ...
+                sprintf(['Permanently delete all %d item(s) in the trash?\n\n' ...
+                         'This cannot be undone.'], n), ...
+                'Empty Trash', 'Options', {'Empty Trash', 'Cancel'}, ...
+                'DefaultOption', 2, 'CancelOption', 2, 'Icon', 'warning');
+            if ~strcmp(choice, 'Empty Trash')
+                return
+            end
+            failures = {};
+            for i = 1:n
+                try
+                    permanently_delete_trash_item(app.cfg, app.TrashRows(i).name);
+                catch ME
+                    failures{end+1} = sprintf('%s: %s', app.TrashRows(i).name, ME.message); %#ok<AGROW>
+                end
+            end
+            app.refreshTrashTable();
+            if ~isempty(failures)
+                uialert(app.UIFigure, strjoin(failures, newline), 'Some items could not be deleted', ...
+                    'Icon', 'warning');
+            end
         end
 
     end
@@ -984,6 +1104,49 @@ classdef EEGDatasetManagerApp < matlab.apps.AppBase
             app.PrintSelectedButton.Layout.Row = 2;
             app.PrintSelectedButton.Layout.Column = 1;
             app.PrintSelectedButton.ButtonPushedFcn = @(src, event) app.PrintSelectedButtonPushed(event);
+
+            % --- Trash tab (global -- not scoped to the selected dataset) ---
+            app.TrashTab = uitab(app.RightTabGroup, 'Title', 'Trash');
+
+            app.TrashGrid = uigridlayout(app.TrashTab, [2 1]);
+            app.TrashGrid.RowHeight = {'1x', 40};
+            app.TrashGrid.ColumnWidth = {'1x'};
+
+            app.TrashTable = uitable(app.TrashGrid);
+            app.TrashTable.Layout.Row = 1;
+            app.TrashTable.Layout.Column = 1;
+            app.TrashTable.ColumnName = {'Name', 'Type', 'Trashed On', 'Original Location'};
+            app.TrashTable.ColumnWidth = {150, 70, 130, '1x'};
+            app.TrashTable.Data = cell(0, 4);
+            app.TrashTable.SelectionType = 'row';
+
+            app.TrashButtonGrid = uigridlayout(app.TrashGrid, [1 3]);
+            app.TrashButtonGrid.Layout.Row = 2;
+            app.TrashButtonGrid.Layout.Column = 1;
+            app.TrashButtonGrid.ColumnWidth = {'1x', '1x', '1x'};
+            app.TrashButtonGrid.Padding = [0 0 0 0];
+
+            app.RestoreButton = uibutton(app.TrashButtonGrid, 'push');
+            app.RestoreButton.Text = 'Restore';
+            app.RestoreButton.Layout.Row = 1;
+            app.RestoreButton.Layout.Column = 1;
+            app.RestoreButton.ButtonPushedFcn = @(src, event) app.RestoreButtonPushed(event);
+
+            app.DeleteForeverButton = uibutton(app.TrashButtonGrid, 'push');
+            app.DeleteForeverButton.Text = 'Delete Forever';
+            app.DeleteForeverButton.BackgroundColor = app.ColorDanger;
+            app.DeleteForeverButton.FontColor = [1 1 1];
+            app.DeleteForeverButton.Layout.Row = 1;
+            app.DeleteForeverButton.Layout.Column = 2;
+            app.DeleteForeverButton.ButtonPushedFcn = @(src, event) app.DeleteForeverButtonPushed(event);
+
+            app.EmptyTrashButton = uibutton(app.TrashButtonGrid, 'push');
+            app.EmptyTrashButton.Text = 'Empty Trash';
+            app.EmptyTrashButton.BackgroundColor = app.ColorDanger;
+            app.EmptyTrashButton.FontColor = [1 1 1];
+            app.EmptyTrashButton.Layout.Row = 1;
+            app.EmptyTrashButton.Layout.Column = 3;
+            app.EmptyTrashButton.ButtonPushedFcn = @(src, event) app.EmptyTrashButtonPushed(event);
 
             app.UIFigure.Visible = 'on';
         end

@@ -22,8 +22,14 @@ cfg.procDir   = fullfile(cfg.root, 'data', 'processed');
 cfg.figDir    = fullfile(cfg.root, 'figures');
 cfg.resultDir = fullfile(cfg.root, 'results');
 cfg.toolboxes = fullfile(cfg.root, 'toolboxes');
+% Deleted datasets/files land here (MOVE_TO_TRASH) instead of being removed
+% outright. A sibling of rawDir, not a child of it -- LIST_DATASETS lists
+% every subfolder of rawDir as a dataset, so trash living inside data/raw
+% would show up as a bogus dataset in the app. Already covered by the
+% existing blanket "data/" gitignore rule.
+cfg.trashDir  = fullfile(cfg.root, 'data', '.trash');
 
-folders = {cfg.rawDir, cfg.procDir, cfg.figDir, cfg.resultDir, cfg.toolboxes};
+folders = {cfg.rawDir, cfg.procDir, cfg.figDir, cfg.resultDir, cfg.toolboxes, cfg.trashDir};
 for k = 1:numel(folders)
     if ~exist(folders{k}, 'dir')
         mkdir(folders{k});

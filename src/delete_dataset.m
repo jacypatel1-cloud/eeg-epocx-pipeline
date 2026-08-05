@@ -1,24 +1,25 @@
-function delete_dataset(cfg, name)
-%DELETE_DATASET  Permanently remove a data/raw/<name> dataset folder.
+function trashPath = delete_dataset(cfg, name)
+%DELETE_DATASET  Move a data/raw/<name> dataset folder to the trash.
 %
-%   delete_dataset(cfg, name) deletes data/raw/<name> and everything in it.
-%   This does not touch data/processed, figures, or results -- any output
-%   already produced from this dataset stays put; only the raw source
-%   folder is removed.
+%   trashPath = delete_dataset(cfg, name) moves data/raw/<name> (and
+%   everything in it) into cfg.trashDir via MOVE_TO_TRASH, and returns
+%   where it landed so the caller can offer to restore it later. This does
+%   not touch data/processed, figures, or results -- any output already
+%   produced from this dataset stays put; only the raw source folder moves.
 %
 %   THE ONE SAFETY CHECK THIS FUNCTION EXISTS TO ENFORCE
-%   The path being deleted must resolve to a direct child of cfg.rawDir.
-%   That guards against ever deleting something else -- a coding mistake
-%   that passed a full path instead of a bare name, or a name containing
-%   ".." -- turning into an rmdir() call somewhere it was never meant to
-%   reach. This is a one-way, unrecoverable operation on (potentially)
-%   irreplaceable recordings, so the check happens before rmdir runs, not
-%   after.
+%   The path being moved must resolve to a direct child of cfg.rawDir. That
+%   guards against ever touching something else -- a coding mistake that
+%   passed a full path instead of a bare name, or a name containing ".." --
+%   turning into a move somewhere it was never meant to reach. Moving to
+%   trash is recoverable, but the check still happens before the move, not
+%   after: it costs nothing to keep and there is no reason to rely on the
+%   trash bin to catch a bug that should never have run at all.
 %
 %   Callers driving this from a UI are expected to confirm with the user
 %   first; this function does not prompt.
 %
-%   See also LIST_DATASETS, RENAME_DATASET, IMPORT_DATASET_ZIP.
+%   See also LIST_DATASETS, RENAME_DATASET, IMPORT_DATASET_ZIP, MOVE_TO_TRASH.
 
 p = inputParser;
 p.addRequired('cfg',  @isstruct);
@@ -49,6 +50,6 @@ if ~strcmpi(char(java.io.File(parentOfTarget).getCanonicalPath()), ...
          'of\n  %s\nNothing was deleted.'], targetPath, cfg.rawDir);
 end
 
-rmdir(targetPath, 's');
-fprintf('Deleted dataset "%s"\n  %s\n', name, targetPath);
+trashPath = move_to_trash(cfg, targetPath);
+fprintf('Dataset "%s" moved to trash.\n', name);
 end
